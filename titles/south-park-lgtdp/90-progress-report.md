@@ -1,11 +1,20 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
-Honest status of the port. **Not yet playable.** The recompiled exe now boots through
-the guest CRT and game subsystem init and reaches **GPU rendering init** (shader
-translation + graphics-pipeline creation) before a guest null-pointer crash ~15 s in.
+Honest status of the port. **Boots and RENDERS the game** — not yet playable, but a major
+milestone: the recompiled exe brings up the full rexglue runtime, executes the guest CRT +
+game init, and **draws the South Park town backdrop via D3D12** (screenshot-verified — the
+"SOUTH PARK" sign, snowy mountains, town buildings). It then presents black frames and
+**hangs**: a worker thread faults during image/asset load, the SEH first-cut recovers it by
+killing the thread, and the main thread waits forever on that worker's completion flag.
+Root cause is a **non-local control transfer** — the game's `RtlRestoreContext`/longjmp
+(`sub_8242EA70`) restores a saved register context and jumps (`blr`) to a mid-function
+continuation, which static recomp emits as a plain C++ `return` (so the caller continues
+with corrupted, setjmp-time registers → a guest-null write). The game uses standard Win32
+table-based SEH (`RtlCaptureContext`/`RtlUnwind`/`__C_specific_handler`); the proper fix is
+a fuller SEH implementation in the runtime/codegen (the maintainer's chosen direction).
 Reference: **Xenia canary boots the title to its menu** from the same base `default.xex`
-(compat #1156), so the target is achievable and the remaining work is tractable iterative
-bring-up. A large, reusable KB accompanies the journey. Updated 2026-05-23.
+(compat #1156), so the target is achievable. A large, reusable KB accompanies the journey.
+Updated 2026-05-23.
 
 ## Where it got to
 
@@ -14,8 +23,9 @@ bring-up. A large, reusable KB accompanies the journey. Updated 2026-05-23.
 | 0 Prereqs / build rexglue | **Done** — Clang 22.1.6 + rexglue-sdk 0.8.1.4 built & installed (D3D12). |
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + ~873 MiB asset tree extracted (corrected STFS math); recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — ~15,000 funcs / 53 TUs → `south_park_td.exe` links & runs. |
-| 3 Boot bring-up | **In progress (iterating, real progress)** — boots through the CRT → subsystem/handler init → party/session writer init → **GPU shader translation + pipeline creation** (`Translated 4 shaders`, `Created 2 graphics pipelines`, `SetInterruptCallback`), ~15 s, then a guest null-pointer write (`sub_824711D0`). Each fault is concrete and fixable; see [[35-entry-forensics]]. |
-| 4–6 | Not started (gated on reaching a frame). |
+| 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → **renders the town backdrop (first frame) via D3D12** (screenshot-verified). |
+| 4 Rendering correctness | **In progress** — the first frame renders correctly; the boot then presents black frames and hangs on the SEH worker-fault non-local-jump bug (`sub_8242EA70`). The GPU itself is healthy (it swaps/presents; no fence stall). See [[35-entry-forensics]]. |
+| 5–6 Audio/input/save, polish | Not started (gated on clearing the SEH loading wait → menu). |
 
 ## What is verified working (run, observed, logged)
 
@@ -57,8 +67,21 @@ Boot bring-up, highest-impact first:
    into GPU rendering init.
 5. **Crash handler.** The runtime had none, so faults died silently and cdb hangs on the
    D3D12 window. Added `SetUnhandledExceptionFilter` + dbghelp `StackWalk64` in `main.cpp`
-   → `crash_backtrace.txt` names the guest `sub_*` frames. Located the current crash as a
+   → `crash_backtrace.txt` names the guest `sub_*` frames. Located the crash as a
    guest null-pointer write in `sub_824711D0`.
+6. **SEH first-cut + the unresolved-branch cascade → first frame (the milestone).** The
+   `sub_824711D0` null write is a *symptom* of a **non-local control transfer** the recomp
+   can't express: `sub_8242EA70` (the game's `RtlRestoreContext`/longjmp) restores a saved
+   register context and `blr`s to a mid-function continuation, but static recomp emits
+   `return`, so the caller resumes with the restored (setjmp-time) `r31` → null write. SDK
+   patch `0007` adds an SEH first-cut (`RtlUnwind`→raise; generated `SEH_TRY/CATCH` that
+   recovers a faulting frame "to caller as failure") which **stops the crash** — the worker
+   recovers instead of taking down the process. Clearing the resulting post-SEH "Unresolved
+   branch" codegen cascade (`fix_recomp_labels.py` *Fix 5* rewrites those FATALs to
+   tail-calls; the `[functions]` config grew to 705) let the boot **reach the first rendered
+   frame — the town backdrop, via D3D12 (screenshot-verified).** The first-cut only
+   *recovers* (kills the worker); it does not yet *resume* the guest handler, so the boot now
+   hangs presenting black frames (the remaining blocker, below).
 
 Earlier Phase-2 plumbing (all reusable, in `tools/fix_recomp_labels.py` + runtime patches):
 undeclared-label gotos (rexglue over-segmentation) → tail-call/trap rewrite; `sub_0`
@@ -99,12 +122,23 @@ small, reproducible accommodations — none research-grade.
   capstone BE-PPC `skipdata`). Reproducible post-codegen fixups beat hand-edits; keep
   upstream patches as files. `general/45`, `general/50`.
 
-## Honest remaining path (tractable iterative bring-up — multi-week+)
+## Honest remaining path (the SEH blocker, then iterative bring-up)
 
-The boot is an iterative bring-up, not a research problem: run → read the FATAL/backtrace
-→ fix → rebuild → it advances. **Immediate next:** the located guest null-pointer write in
-`sub_824711D0` (REXLOG_WARN the null field there + its callers). After the boot stops
-faulting it reaches the render/update loop; then Phases 4–6 (rendering correctness, audio
-XMA→SDL, input, save/continue) are the "normal" iteration. Realistic total to *playable*:
-multi-week to a few months, dominated by Phase 4–6 correctness rather than any single
-blocker. The reference emulator booting to menus de-risks the whole path.
+**Immediate next = a fuller Win32-SEH implementation** (the maintainer's chosen direction).
+The boot renders the first frame, then a worker thread takes an SEH path during asset load
+and the first-cut (recover-to-caller) kills it → the main thread hangs presenting black
+frames. The real fix is the **non-local jump / exception resume**: the game uses table-based
+SEH (`RtlCaptureContext`/`RtlUnwind`/`__C_specific_handler` imports + its own
+`RtlRestoreContext` = `sub_8242EA70`). The runtime must drive the exception dispatch so a
+raised exception unwinds to — and **resumes at** — the correct (mid-function) guest handler,
+instead of returning to the caller. There is no guest `setjmp`, so rexglue's
+`setjmp_address`/`longjmp_address` shortcut does not apply. This is the hardest part of
+static recomp (mid-function resume + exception dispatch); realistic effort is deep/iterative.
+**Once a worker can take an SEH path and resume**, the boot should clear the loading wait and
+reach the menu; then Phases 4–6 (rendering correctness, audio XMA→SDL, input, save/continue)
+are the "normal" iteration. The reference emulator (canary boots to menus) de-risks the path.
+
+Diagnostic tooling that made this tractable (reusable): cdb **attach** `~*k` for live
+guest stacks; **screenshot** the D3D12 window by handle; an **SEH fault backtrace** in
+`seh_filter`; a **`WAIT_REG_MEM` stuck-detector**; **DbgPrint string** extraction from the
+decrypted image (identified the D3D9 GPU-hang detector). See `general/95`, `general/80`.
