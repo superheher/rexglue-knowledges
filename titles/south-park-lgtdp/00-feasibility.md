@@ -33,6 +33,16 @@ reachable much sooner. See the milestone table at the end.
 > (kernel-side / non-standard). Re-rate **"boots a first frame" → Low-Medium,
 > pending** a Xenia-canary result (canary is far more compatible) or deeper RE.
 > The extraction/recompile/compile/run-guest-code outcomes below all held.
+>
+> **Update 2 (same day): canary too.** Confirmed in Xenia *canary* as well — it
+> does not crash (it returns from the stub) but the game **still never
+> initializes** (main thread makes zero further calls; 206 unresolved import
+> variables). So **neither Xenia version boots this title** — both run only the
+> entry stub. Re-rate **"boots a first frame" and "playable" -> Low /
+> research-grade.** The favourable import surface is moot; the **entry/boot
+> anomaly** is the real blocker. This makes South Park a poor *playable* candidate
+> but an excellent *KB case-study* candidate; a title that already boots in Xenia
+> would be a far better target for the playable goal.
 
 ---
 

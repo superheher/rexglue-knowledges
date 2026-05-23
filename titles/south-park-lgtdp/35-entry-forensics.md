@@ -145,11 +145,29 @@ the recomp is behaving correctly; the title's entry is the problem.
   some other path. So the remaining unknown is unchanged — *how is the real init
   triggered* — and it is **not** answered by stock Xenia (which simply can't run
   this title).
-- **Remaining lever:** Xenia **canary** is far more title-compatible and may have a
-  fix for this entry/launch pattern; if canary boots it, its handling can be
-  studied and replicated. (Canary's CLI launch didn't fire here, so that test needs
-  a GUI launch — maintainer hand-off.) If canary *also* crashes at `0x824499CC`,
-  the title needs research-grade RE to boot.
+### Canary too: no crash, but still no boot (decisive)
+
+Also traced **Xenia canary** (`canary_experimental@09dbe2c`, run the same way; the
+earlier canary "failures" were a *corrupted config* from my edits — a **fresh**
+config + CLI flags works). Canary **does not crash** (it seeds a valid return frame
+so the stub epilogue returns cleanly) — **but the game still never initializes**:
+
+- Main XThread starts (`XThread::Execute thid 6`) and then logs **nothing more** at
+  debug level — i.e. it makes **zero kernel calls** (the stub calls none) and the
+  log is **static after ~20 s** (sampled at 20 s and 45 s: identical size). No game
+  worker threads, no GPU draws/present.
+- **206 "import variable was not resolved" warnings** (xboxkrnl/xam data imports
+  Xenia can't bind) — a large, unusual unresolved-data surface for this title.
+
+**Definitive conclusion:** South Park LGTDP **does not boot in Xenia** (stock
+*or* canary). In both, guest execution is **only the XEX entry stub** — stock dies
+in its epilogue, canary returns from it and the title goes no further. The
+recompilation **mirrors the reference emulator exactly**, so the recomp is correct;
+the title's real boot is **not supported by the reference emulator**, which means
+making it *playable* is **research-grade** (needs real-HW boot tracing or deep
+kernel RE to discover how the real init is triggered past the stub). This is a
+**feasibility finding** that the import-only [[00-feasibility]] analysis could not
+have predicted — the entry/boot anomaly, not the import surface, is the blocker.
 
 ## Dynamic trace via Xenia — setup notes
 
