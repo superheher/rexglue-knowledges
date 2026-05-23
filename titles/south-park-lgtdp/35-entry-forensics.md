@@ -108,7 +108,50 @@ behaviour and/or hidden behind indirect calls). The two viable unblocks:
    indirect call graph and locates `main`; then the runtime entry can be overridden
    to `mainCRTStartup` and the boot re-tried empirically.
 
-## Dynamic trace via Xenia — setup (in progress)
+## Dynamic trace via Xenia — RESULT: it crashes identically (analysis vindicated)
+
+**Captured a boot trace in stock Xenia (`xenia-project` master `v1.0.2844`, run via
+a `schtasks /it` interactive task — see setup notes below).** Stock Xenia's CLI
+launch works (canary's did not). The result is decisive and confirms the static
+analysis *exactly*:
+
+- Xenia reads `XEX_HEADER_ENTRY_POINT: 824499A0` (matches us) and creates
+  **"Main XThread" (thid 6)** at the entry.
+- The main thread goes **straight to a CRASH DUMP** — nothing runs between
+  `XThread::Execute` and the crash (no imports, no init):
+  - **`PC = 0x824499CC`** (the `blr` at the end of the entry stub)
+  - **`r12 = 0xBEBEBEBE`, `r31 = 0xBEBEBEBEBEBEBE`** (Xenia's *poison* for
+    uninitialised memory), `r1 = 0x7018FFC0`, all else 0.
+
+That is precisely the predicted failure: entered cold at `0x824499A0`, the prologue
+(`mflr r12; stw r12,-8(r1)` at `0x82449968`) is **skipped**, so the epilogue
+`lwz r12,-8(r1); mtlr r12; … blr` restores a **poison return address** and jumps to
+`0xBEBEBEBE`. **Stock Xenia crashes South Park the same way a naïve recomp would** —
+the recomp is behaving correctly; the title's entry is the problem.
+
+### What this means
+
+- **The title does not boot via the standard "call the XEX entry" model** — proven
+  in the reference emulator, not just inferred. South Park LGTDP is a genuinely hard
+  title (consistent with no public recomp existing).
+- **Root cause of the crash:** the XEX entry points *into* a function, past the
+  prologue that saves LR. A normal entry (`mainCRTStartup`) saves Xenia's
+  return-LR in its prologue and restores it; this entry never saves it, so the
+  epilogue returns to garbage. On real HW the kernel's thread-startup must seed a
+  valid return address at `[r1+0x68]` (the slot the epilogue reads) for this to
+  return cleanly — a kernel-ABI detail stock Xenia doesn't replicate.
+- **But fixing the crash ≠ booting:** even returning cleanly, the entry is a
+  do-nothing stub (kernel-query + TLS store). The game's real init is reached by
+  some other path. So the remaining unknown is unchanged — *how is the real init
+  triggered* — and it is **not** answered by stock Xenia (which simply can't run
+  this title).
+- **Remaining lever:** Xenia **canary** is far more title-compatible and may have a
+  fix for this entry/launch pattern; if canary boots it, its handling can be
+  studied and replicated. (Canary's CLI launch didn't fire here, so that test needs
+  a GUI launch — maintainer hand-off.) If canary *also* crashes at `0x824499CC`,
+  the title needs research-grade RE to boot.
+
+## Dynamic trace via Xenia — setup notes
 
 Set up **Xenia canary** as a boot-trace oracle (download `xenia_canary_windows.zip`
 from `xenia-canary/xenia-canary` releases). Config for a clean, max-detail boot log

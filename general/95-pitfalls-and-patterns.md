@@ -84,6 +84,13 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   → The real `mainCRTStartup` is reached another way (kernel/loader behaviour or an
   indirect path); finding it needs a **dynamic trace or a decompiler**, not more
   launch tweaks. (`45`, `70`)
+  **Dynamic signature (confirmed):** entered cold, such an entry crashes in its own
+  **epilogue** — `lwz r12,-8(r1); mtlr r12; … blr` returns to a **poison/garbage**
+  address (e.g. `0xBEBEBEBE` in Xenia) because the skipped prologue never saved LR.
+  A trace showing the crash PC at the entry's `blr` with `r12`/`r31`=poison is the
+  tell. **Stock Xenia reproduces this exact crash** for such a title — a useful
+  reference check: if the *reference emulator* dies at the same instruction, your
+  recomp is correct and the title's launch is genuinely non-standard. (`45`)
 - **Process crashes on EXIT (nondeterministic AV / `STATUS_HEAP_CORRUPTION`), not
   during play; runs clean under a debugger.** → A **runtime shutdown/teardown**
   bug (e.g. input-listener destructor dereferencing a stale pointer), *not* guest

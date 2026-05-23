@@ -22,6 +22,18 @@ Realistic effort for a focused developer (or a well-driven agent loop):
 **~2–4 months part-time** to playable single-player; "boots & renders" is
 reachable much sooner. See the milestone table at the end.
 
+> **Status update (2026-05-23) — "boots" risk is higher than first estimated.**
+> Bring-up reached a real wall *before* the first frame: the title's **XEX entry
+> point `0x824499A0` is a do-nothing stub** entered mid-function, and entering it
+> the standard way (`r3=0`, no prologue) **crashes** at `0x824499CC` (returns to a
+> poison address). This was **confirmed dynamically in stock Xenia** — the
+> reference emulator crashes this title at the *exact same* instruction (see
+> [[35-entry-forensics]]). So "boots & renders" is **not** reachable by the
+> standard launch model; it depends on discovering how the real init is triggered
+> (kernel-side / non-standard). Re-rate **"boots a first frame" → Low-Medium,
+> pending** a Xenia-canary result (canary is far more compatible) or deeper RE.
+> The extraction/recompile/compile/run-guest-code outcomes below all held.
+
 ---
 
 ## Why it is feasible (evidence)
