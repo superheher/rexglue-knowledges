@@ -1,0 +1,81 @@
+# Containers & extraction — getting `default.xex` and the assets
+
+A dump is rarely a bare XEX; it is a **container** holding the executable plus
+the title's asset files. You must extract both: the **`default.xex`** (to
+recompile) and the **asset tree** (for the runtime's virtual filesystem to mount
+at run time). Identify the container by its **magic / structure**.
+
+## Container types you'll meet
+
+### STFS (XBLA, DLC, saves, updates)
+*Secure Transacted File System* — the package format for Xbox Live Arcade games,
+DLC, title updates, profiles and saves. Signing variants by the **magic at
+offset 0**:
+
+| Magic | Meaning |
+|---|---|
+| `CON ` | Console-signed (by a specific console) |
+| `LIVE` | Xbox Live-signed (official downloads) |
+| `PIRS` | Microsoft offline-signed (system updates, some content) |
+
+Structure essentials (for read-only extraction you can ignore the signatures):
+- **Header region** spans the first `0xC000` bytes (license, metadata, the **volume
+  descriptor**, package name, title/content metadata, thumbnail).
+- **Data region** begins at **`0xC000`**; **block size `0x1000`** (4 KiB).
+- A **file table** (entries of `0x40` bytes: name, flags, block count, starting
+  block, file size) describes the contents; the volume descriptor points to it.
+- **Hash blocks** are interleaved: one level-0 hash block per **`0xAA` (170)**
+  data blocks, with higher-level hash blocks above them; the read-only vs
+  read-write flag changes backup-hash spacing. **Block→offset conversion must
+  skip these hash blocks** — the one piece of real arithmetic in an extractor.
+
+> An XBLA game is typically a single **`LIVE`** package whose root contains
+> `default.xex` plus the title's files. Title updates and DLC arrive as separate
+> (often small) STFS packages — classify each.
+
+### GOD — "Games on Demand" / installed XBLA
+STFS-based but **split**: a small header file plus one or more **`Data####`**
+chunk files in a sibling directory. Conceptually the same filesystem spread over
+multiple files; extractors that understand GOD reassemble it.
+
+### ISO / GDFX (disc games)
+Disc titles are **XGD** images using the **XDVDFS/GDFX** filesystem. The root
+contains `default.xex` and assets. Extract with **`extract-xiso`** (also useful
+for rebuilding/trimming). Disc images may have a video partition + a game
+partition at a known offset.
+
+## Tools
+
+| Tool | Handles | Notes |
+|---|---|---|
+| **wxPirs** | STFS | Simple GUI extractor for CON/LIVE/PIRS packages |
+| **Velocity** | STFS / packages | Cross-platform package manager/extractor |
+| **Horizon** | STFS | Windows package editor/extractor |
+| **QuickBMS** + STFS script | STFS | Scriptable/CLI extraction |
+| **extract-xiso** | ISO/GDFX | Disc image extraction & rebuild |
+| **xextool / xex utilities** | XEX | Inspect/decompress XEX after extraction |
+| **a purpose-written reader** | STFS | Preferred for reproducibility in `tools/` |
+
+For an automated/agent pipeline, a **small committed extractor** (Python or C++)
+beats a GUI tool: it is reproducible and scriptable. STFS read-only extraction is
+modest (parse volume descriptor → walk file table → for each file, follow its
+block chain, converting block numbers to offsets while skipping hash blocks).
+
+## Extraction goals (per title)
+
+1. **`default.xex`** → a git-ignored `private/`/`extracted/` dir. Verify the
+   first four bytes are `XEX2`.
+2. **Asset tree** → a content root the runtime mounts via its VFS. Preserve the
+   original directory layout and names (the guest opens files by path).
+3. **Title updates / DLC** → extract and classify; keep any **`.xexp`** for the
+   recompiler's patch input (see `20-xex-format.md`).
+4. Note total sizes and notable file types (audio banks, video, archives) — they
+   hint at which runtime subsystems you'll need (XMA, video, custom archive
+   formats).
+
+## Legal & hygiene
+
+- **Bring your own dump.** Extract only from content you are entitled to use.
+- **Never commit** extracted code or assets — git-ignore the dump, `private/`,
+  `extracted/`, `*.xex`, `*.xexp`, and the asset root.
+- Record *measurements* (sizes, offsets, formats) in the KB, not *content*.
