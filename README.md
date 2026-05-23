@@ -60,6 +60,7 @@ Legend: ✅ written · ✍️ skeleton (expand on contact) · ⏳ filled during 
 |-----|:--:|-------|
 | `00-feasibility.md` | ✅ | Graded feasibility verdict + risk register for this title |
 | `10-dump-analysis.md` | ✅ | Container layout, XEX/import findings, extraction plan |
+| `15-environment.md` | ✅ | Host toolchain: what's installed and how (Phase 0 record) |
 | `20-imports-backlog.md` | ⏳ | Concrete kernel/XAM imports used: done/todo |
 | `30-boot-log.md` | ⏳ | Boot bring-up journal (crash → cause → fix) |
 | `40-render-notes.md` | ⏳ | Shader/render correctness findings |

@@ -52,6 +52,25 @@ rexglue, and `XenonAnalyse` is a useful second opinion on jump tables.
 
 > The usual gap on a fresh machine is **Clang** — install LLVM/Clang 20+ first.
 
+### Installing without admin rights
+
+If you can't elevate (no Administrator), use the user-scoped **scoop** package
+manager — it installs into `%USERPROFILE%\scoop`, needs no UAC, and is fully
+reversible:
+
+```powershell
+# from Windows PowerShell (no admin)
+Set-ExecutionPolicy RemoteSigned -Scope CurrentUser -Force
+irm get.scoop.sh | iex
+scoop install llvm      # Clang/LLVM (clang, clang-cl, lld-link) — currently 22.x
+scoop install pwsh      # PowerShell 7 (for PSReX), optional
+```
+
+scoop persists `~\scoop\shims` and `~\scoop\apps\llvm\current\bin` to the **user
+PATH**, so new terminals pick up `clang`. Note: a process started *before* the
+install won't see the new PATH until restarted. (winget's `LLVM.LLVM` installs
+machine-wide and typically needs admin; scoop avoids that.)
+
 ## rexglue per-title workflow (documented form)
 
 ```pwsh
