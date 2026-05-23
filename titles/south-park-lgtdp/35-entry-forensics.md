@@ -1,9 +1,10 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
-> ## 🚀 CURRENT STATUS (2026-05-23, latest) — boot past the writer crash; new blocker = a missing function
+> ## 🚀 CURRENT STATUS (2026-05-23, latest) — boot reaches GPU rendering init (shaders + pipelines)
 > This file is a chronological log; newest first. **Bottom line:** the recomp now boots
-> through the CRT, runs the game subsystem init, and the `sub_8227EB58` null-write crash
-> is **root-caused + fixed (runtime-verified)**. Five fixes, in order of impact:
+> through the CRT, runs game subsystem init, and reaches **GPU rendering init** (shader
+> translation + pipeline creation) — runtime-verified, ~15s in — then hits an access
+> violation. Six fixes, in order of impact:
 > 1. **Content corruption** (the big one): my `tools/stfs_extract.py` had an STFS
 >    block-math bug → the recomp ran on a corrupt `default.xex`+assets. Fixed +
 >    re-extracted; `.data` now byte-matches canary.
@@ -26,18 +27,23 @@
 >    both an indirect-call target and `sub_822E38E8`'s branch target. Hand-emitted +
 >    registered in the func table; persisted as `fix_recomp_labels.py` *Fix 4*. Verified:
 >    boot advances past it (more writer registrations succeed).
-> **Next blocker (SYSTEMIC):** `[FATAL] Call to invalid or unregistered function at
-> 0x82250288` — a CLASS, not a one-off: **vtable-only-referenced methods**. `0x82250288`
-> is mid-`.pdata`-function virtual-dispatch (`lwz r3,0x4C(r3); lwz r11,0(r3); lwz
-> r11,0xC(r11); mtctr; bctrl` inside `sub_822501C8`). rexglue's analyzer scans `.pdata` +
-> direct-call targets but NOT function pointers stored in `.data` vtables, so methods only
-> reachable via a vtable are never emitted → indirect calls hit unregistered addresses.
-> Hand-emitting each won't scale; feed rexglue the full function set instead. Leads:
-> `third_party/rexglue-sdk/src/rexglue/commands/legacy_config.cpp` (XenonRecomp-style TOML
-> with explicit `functions`) + `src/system/map_parser.cpp` (symbol map); or scan `.data`
-> for `0x82100000–0x825F0C18` pointers and add them as functions, then regen. Then Phases
-> 4-6. Reproduce: re-extract → `rexglue -f codegen` → `tools/fix_recomp_labels.py` → build
-> → run `out/build/.../south_park_td.exe --game_data_root=<repo>\private\extracted`.
+> 6. **Analyzer-missed function CLASS → `[functions]` config (the big systemic win):**
+>    "Call to invalid or unregistered function at 0x..." FATALs are indirect-call targets
+>    rexglue's analyzer misses — vtable methods its `VTableScanner` skips + computed-jump/
+>    adjustor-thunk targets mid-function (e.g. `0x82250288`, `0x822E38E0`, `0x82247E20`).
+>    FIX: rexglue's `RecompilerConfig.[functions]` table (`"0xADDR" = {}` ⇒ extent
+>    auto-discovered, CONFIG authority), layered via the manifest's `[entrypoint].includes`.
+>    `tools/gen_missing_funcs.py` builds the list (vtable-pointer runs, EXCLUDING the
+>    import-thunk band `0x82591BCC..0x82592A8C` — registering an import addr ⇒ link error
+>    `undefined symbol: sub_8259xxxx`) + a few hand-listed computed targets. A **670-function
+>    batch** cleared the ENTIRE class (0 FATALs).
+> **Verified: boot now reaches GPU rendering init** — `Translated 4 shaders` + `Created 2
+> graphics pipelines` + `SetInterruptCallback`, running ~15s before the next fault.
+> **Next blocker:** an **access violation (`0xC0000005`) at ~15s**, after pipeline creation
+> — a guest null/bad-pointer deref deeper in init (crash ends the log with no line;
+> instrument the suspect deref or run a trace to localise). Then the render/update loop +
+> Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` → `tools/fix_recomp_labels.py`
+> → build → run `out/build/.../south_park_td.exe --game_data_root=<repo>\private\extracted`.
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed

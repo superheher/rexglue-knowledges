@@ -92,3 +92,48 @@ links `rexruntime`. **Phase 2 acceptance met** (compiles + links to an
 executable; running is Phase 3). Reproduce: `rexglue codegen` →
 `python tools/fix_recomp_labels.py` → `cmake --build --preset
 win-amd64-relwithdebinfo`.
+
+## Analyzer-missed functions: the `[functions]` config (Phase 3)
+
+During boot bring-up the runtime FATALs with **"Call to invalid or unregistered
+function at 0x..."** — an indirect `bctr/bctrl` whose target rexglue never
+emitted/registered. Two classes (see `general/95`):
+- **vtable methods** in vtables rexglue's built-in `VTableScanner` doesn't
+  recognise, and
+- **computed-jump / adjustor-thunk targets *inside* a larger function** (reached
+  via a runtime-computed `ctr`; these are **not** static `.data` pointers, so a
+  pointer scan can't find them — each only surfaces at runtime).
+
+**Fix mechanism (rexglue, no SDK change):** `RecompilerConfig` has a `[functions]`
+table (`"0xADDR" = { size?, end?, name?, parent? }`; empty ⇒ extent auto-discovered,
+**CONFIG** authority so it isn't merged away even mid-function). It is loaded by
+`RecompilerConfig::LoadFromTable` from the entrypoint, and the entrypoint supports
+an `includes` array — so we layer a separate file in via the manifest:
+
+```toml
+# south_park_td_manifest.toml
+[entrypoint]
+includes = ["config/sp_functions.toml"]
+```
+```toml
+# config/sp_functions.toml
+[functions]
+"0x822E38E0" = {}   # adjustor thunk (addi r3,r3,8; b 0x822E2298)
+"0x82250288" = {}   # virtual-dispatch tail inside sub_822501C8
+```
+Then `rexglue -f codegen` logs `Analyze: N CONFIG functions` and emits + registers
+each. Registering a mid-function target is valid: it executes that tail and returns.
+
+**Gotchas (learned the hard way):**
+- **Never register an import-thunk address.** Vtable scans pick up code pointers
+  that land in the import band (here `0x82591BCC..0x82592A8C`); rexglue resolves those
+  as `__imp__Name`, not `sub_`, so a `[functions]` entry there ⇒ `undefined symbol:
+  sub_8259xxxx` at link. `tools/gen_missing_funcs.py` excludes anything already in the
+  table as `sub_` **or** `__imp__`.
+- **Adding hundreds at once perturbs analysis** (a 681-entry batch shifted boundaries
+  and broke an unrelated function). Prefer incremental additions, each verified by a
+  build. The static-vtable batch must be generated from a *clean* codegen (the tool
+  reads the registered set from `*_init.cpp`, which a prior config run pollutes).
+- `tools/gen_missing_funcs.py` finds the static-vtable class (runs of ≥3 consecutive
+  4-aligned code pointers minus registered); the computed class is hand-listed as it
+  FATALs (`KNOWN_COMPUTED`).

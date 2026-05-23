@@ -32,7 +32,7 @@ a large reusable KB. Written/updated 2026-05-23.
 | 0 Prereqs / build rexglue | **Done** — Clang 22.1.6 + rexglue-sdk 0.8.1.4 built & installed (D3D12). |
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + 872.7 MiB asset tree extracted; recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — 20,045 funcs / 51 TUs / 102 MiB C++ → `south_park_td.exe` (36.8 MiB) **links & runs**. |
-| 3 Boot bring-up | **Blocked (research-grade)** — runtime init works and the guest entry executes, but the XEX entry is a **stub** that runs zero game/CRT code. **Dynamically confirmed**: South Park doesn't boot in Xenia (stock *or* canary) — both run only the stub. The real boot is non-standard / kernel-side; `mainCRTStartup` is not in the normal call flow and is undiscoverable headlessly. See [[35-entry-forensics]]. |
+| 3 Boot bring-up | **In progress (iterating)** — the recomp now **boots through the guest CRT** into game subsystem init. (The earlier "research-grade / doesn't boot" verdict was a **setup error**: the recomp ran on a *corrupt* loose `default.xex` from a bug in my own `tools/stfs_extract.py`; canary **does** boot the title to menus (compat #1156) from the STFS package. Both corrected — see [[35-entry-forensics]].) Boot now runs xstart → CRT → subsystem/handler init → party/session writer init → GPU `SetInterruptCallback`, fixing bugs as they surface (content corruption, boot continuation, null EH hook, analyzer-missed functions). See [[35-entry-forensics]]. |
 | 4–6 | Not started (gated on boot). |
 
 ## What is verified working (run, observed, logged)
@@ -84,54 +84,53 @@ lifting; none of the blockers were research-grade — they were bring-up plumbin
 - Methodology: reproducible post-codegen fixups beat hand-edits; keep upstream
   patches as files; `cdb -g -G -cf` + `sxe eh` is the fastest crash/throw triage.
 
-## Honest remaining path (now: research-grade, not just multi-week)
+## Honest remaining path (tractable iterative bring-up — multi-week+)
 
-The next milestone (first rendered frame) requires getting the title's **real
-init/main to run**, and this session **escalated the difficulty** from "multi-week
-bring-up" to **research-grade for this title**, with dynamic proof:
+> **Retraction (2026-05-23):** an earlier version of this section called the boot
+> "research-grade / doesn't boot anywhere." That was a **setup error**, now
+> corrected and superseded. Two root causes had masked the real boot: (1) the
+> recomp ran on a **corrupt** loose `default.xex` (a bug in my own
+> `tools/stfs_extract.py` STFS block math — `.text` survived so the entry
+> disassembled, but `.data`/assets were garbage), and (2) the boot **continuation**
+> wasn't wired (the XapiThreadStartup trampoline's `blr` needs the dispatcher to
+> follow it). With correct content + the continuation fix, the recomp **boots
+> through the guest CRT**, and **canary boots the title to menus** (compat #1156)
+> from the STFS package. The XEX entry `0x824499A0` is the normal XapiThreadStartup
+> trampoline, not a dead stub. See [[35-entry-forensics]].
 
-1. The XEX entry (`0x824499A0`) is a **stub** (confirmed by XEX/PE headers,
-   independent decrypt, `.pdata`, Ghidra). Entered the standard way it runs no
-   game/CRT code.
-2. **Xenia can't boot it either** (stock crashes at the stub's `blr`; canary returns
-   from the stub but the game never initializes) — so this is *not* a recomp defect
-   and *not* solvable by the standard launch model. [[35-entry-forensics]]
-3. The real `mainCRTStartup` is **not invoked in the normal flow** and could not be
-   located by 5+ headless static methods (the binary is extremely C++/vtable/
-   singleton/VMX128-dense). [[35-entry-forensics]] table.
-4. **Empirically tested** ("one more shot"): an env-var entry override (patch `0004`)
-   + brute-force over the **65 zero-reference prologue candidates** (the pool that
-   must contain `mainCRTStartup`). **No forced entry boots the game** — candidates
-   return like the stub, crash on garbage pointers, or run briefly then exit; none
-   reaches the game phase. This indicates the boot is **kernel-orchestrated** (state/
-   sequence around the entry), so even the right entry won't boot when forced in
-   isolation. The headless attack surface is now exhausted. [[35-entry-forensics]]
+The boot is now an **iterative bring-up**, not a research problem. Each fault is a
+concrete, fixable bug; the loop is: run → read the FATAL/crash → fix → rebuild →
+the boot advances. Verified progression this session: `xstart` → CRT → subsystem/
+handler init → party/session **writer init** (was a hard crash; fixed) → GPU
+`SetInterruptCallback` → deeper subsystem registration → next missing function.
 
-**What would actually unblock it (pick one):**
-- **Interactive decompiler (Ghidra/IDA GUI)** — a human-driven session navigating
-  from the `.CRT` section / init array / `exit`-terminate imports to find the real
-  CRT entry, then start the recomp there via the prepared `REX_ENTRY_OVERRIDE` hook.
-  (Maintainer has Ghidra + RE expertise.)
-- **Real-hardware (or JRPCS3-style) boot trace** — capture how the kernel actually
-  drives this title's init past the stub.
-- **Pivot** to a title that *does* boot in Xenia (verifiable up front) for the
-  *playable* goal; South Park remains a strong KB case study.
-
-After boot reaches a frame, Phases 4–6 (rendering, audio, input, save) are the
-"normal" multi-week iteration the original estimate covered. This session cleared
-Phases 0–2, all the Phase-3 *plumbing*, and **definitively characterised the
-Phase-3 blocker** (the largest reusable outcome).
+**Remaining work to a first frame:** keep clearing the current fault class —
+**"Call to invalid or unregistered function at 0x..."** (indirect-call targets
+rexglue's analyzer misses) — via the `[functions]` config (see [[20-codegen]] and
+the catalog entry in `general/95`). A scan-generated batch (`tools/gen_missing_funcs.py`)
+registers the static-vtable class in one regen; the computed-jump class is added as
+each surfaces. After the boot stops faulting on missing functions it will reach the
+render/update loop, and Phases 4–6 (rendering correctness, audio XMA→SDL, input,
+save) are the "normal" multi-week iteration the original estimate covered. Realistic
+total to *playable*: multi-week to a few months, dominated by Phase 4–6 correctness,
+not by any single blocker.
 
 ## Top reusable lessons from this session (promoted to general/)
 
-- **Use Xenia as a boot-trace oracle** (stock *and* canary) to validate a recomp's
-  launch and to tell "hard title" from "recomp bug": if the reference emulator dies
-  at the same instruction, the recomp is correct. Setup gotchas (license_mask,
-  discord hang, GUI-only launch in some builds) in `general/45`+`95`.
+- **Use Xenia/canary as the ground-truth oracle**, but **verify the inputs first** —
+  the single biggest time sink here was debugging a recomp running on *corrupt
+  extracted content*; a `.text`-only-correct dump boots far enough to look real.
+  Cross-check `.data` against the reference emulator early. `general/95`.
 - **`.pdata` is the authoritative function table** (big-endian; auto-locate; merges
   tiny funcs); machine type `0x01F2` needs capstone BE-PPC w/ `skipdata`. `general/45`.
-- **A mid-function/stub XEX entry is a real, diagnosable anomaly** with a clean
-  dynamic signature (epilogue `blr` to a poison LR). `general/95`.
-- **CRT-entry signature hunts (`_initterm`, init-array, security-cookie) drown in
-  C++ noise** in heavy titles — don't expect headless heuristics to pin
-  `mainCRTStartup`; use interactive RE or a trace. `general/45`.
+- **The analyzer misses indirect-call targets** (vtable methods + computed-jump/
+  adjustor-thunk targets); runtime FATALs them as "unregistered function." Fix via
+  the recompiler's explicit-`functions` config + regen, not by hand-emitting each;
+  **never** register an import-thunk address (→ undefined `sub_`). `general/95`, `general/50`.
+- **Instrument the recomp itself** (a one-line `REXLOG_WARN` of the suspect pointer/
+  gate) to turn a silent null-deref into a root cause in one run; the runtime has no
+  exception handler, so a hard fault just ends the log. `general/95`.
+- **A null runtime hook can silently skip setjmp-style try bodies** — if a dispatcher
+  calls `[global_fn_ptr]` only when set and the pointer is image-zero/uninstalled, the
+  faithful fallthrough returns a stale value the caller reads as "exception taken,"
+  skipping critical init. Default such a dispatcher to the "no-jump" value. `general/80`.

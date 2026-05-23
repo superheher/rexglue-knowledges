@@ -39,6 +39,19 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Trap/`__builtin_trap`/crash at an indirect branch.** → Missing **jump table**
   entry. → Add it via `XenonAnalyse`/scanner output or hand-author in the switch
   table TOML. (`50`)
+- **`Call to invalid or unregistered function at 0x...` at runtime (an indirect
+  `bctr`/`bctrl`).** → The analyzer never emitted/registered a function at that
+  address, so the dispatcher can't resolve it. Two classes: **(a)** a **vtable
+  method** in a vtable the scanner didn't recognise, or **(b)** a **computed-jump /
+  adjustor-thunk target inside a larger function** (reached via a runtime-computed
+  `ctr`; it is NOT a static pointer, so a `.data` pointer scan won't find it — it only
+  surfaces at runtime). → Register the address(es) as **CONFIG functions** (`[functions]`
+  table, `"0xADDR" = {}` — empty ⇒ extent auto-discovered; CONFIG authority means it
+  won't be merged away even mid-function), layered into the entrypoint via `includes`,
+  then re-codegen. Find the static-vtable class by scanning the image for runs of ≥3
+  consecutive 4-aligned code pointers minus the registered set; add class (b) as each
+  one FATALs. Registering a mid-function target works because it executes that tail and
+  returns. (`50`, `45`)
 - **A function bleeds into the next; bad returns/stack.** → Wrong **function
   boundary** or wrong **register save/restore** address. → Declare boundaries in
   `functions`; fix save/restore addresses by byte pattern. (`50`)
