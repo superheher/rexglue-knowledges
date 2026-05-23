@@ -1,5 +1,23 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
+> ## 🚀 CURRENT STATUS (2026-05-23, latest) — recomp boots through the CRT
+> This file is a chronological log; newest first. **Bottom line:** the recomp now
+> **executes the guest CRT boot** — `XThread::Execute → xstart → sub_82249638 →
+> sub_82249678 → sub_82252EA8 → sub_8227ED00 → sub_8227EB58` (+ dynamic xam import
+> resolution) — before faulting on a **guest null-pointer write** in `sub_8227EB58`
+> (`mov [r9+rcx],eax`, r9=0). This took three fixes, in order of impact:
+> 1. **Content corruption** (the big one): my `tools/stfs_extract.py` had an STFS
+>    block-math bug → the recomp ran on a corrupt `default.xex`+assets. Fixed +
+>    re-extracted; `.data` now byte-matches canary.
+> 2. **Boot continuation** (patches 0005/0006): zero the stack (not `0xBE`) + a gated
+>    reenter in `XThread::Execute`, so the XapiThreadStartup trampoline flows into the
+>    body. (With the corrected `.pdata`, codegen now keeps entry+body as one function.)
+> 3. **Missing imports**: 7 `XUsbcam` stubs in `src/stubs.cpp`.
+> **Next blocker:** the null write in `sub_8227EB58` (a CRT/boot pointer left null — a
+> stubbed kernel fn returning null, an uninitialized global, or a failed guest alloc),
+> then Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` →
+> `tools/fix_recomp_labels.py` → build → run via `out/build/.../south_park_td.exe`.
+
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
 > dereferencing `.data[0x8260E0F0]=0xA1`. Verified with the instrumented canary's
