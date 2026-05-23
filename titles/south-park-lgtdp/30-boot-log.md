@@ -141,8 +141,44 @@ Two more fixes + a debugger pass refined the picture:
    `instruction_dispatch.cpp` + `builders/` (load/store-multiple and quad are
    mechanical; FP-quad needs the FPR pair layout).
 
-**Status:** boots through full runtime init and **executes the guest entry point
-without crashing**; the exit crash is a runtime *shutdown* bug, not guest code.
-**Not yet at a rendered frame** — the guest `main` returns early instead of
-looping. This is the genuine multi-week core of bring-up (per the plan's Phase 3
-estimate). Tools, patches, and the exact next diagnostics are recorded above.
+### Decisive: the entry makes ZERO kernel calls
+
+Temporarily instrumenting the central kernel wrapper `REX_HOOK` (hook.h) with
+`REXKRNL_TRACE("kcall {}", #subroutine)` and running at `--log_level=trace`
+showed **`kcall` count = 0**: the guest entry thread runs and returns having
+called **no** kernel function at all. Static trace of the reached chain confirms
+why — it is trivial:
+
+```
+xstart (0x824499A0):  cmpwi r3,-1; (r3==-1 →) bl sub_8244EC20; lwz r3,84(r1); <epilogue>; blr
+sub_8244EC20:         b sub_8244EC28                       (1-instruction thunk)
+sub_8244EC28:         r11=[r13+336]; if (r11!=0) return; [[r13+256]+352]=r3; return
+```
+
+i.e. the XEX entry point does a little PCR/TLS bookkeeping and returns. A real
+title entry would call dozens of kernel imports (heap/TLS init, asset file I/O,
+`ExCreateThread`, …). **The entry point as executed does not lead into the game's
+real startup.** (The `REX_HOOK` instrumentation was reverted afterwards; to repeat
+it, re-add that one line and rebuild the runtime — gated by `--log_level=trace`.)
+
+So the top Phase-3 task is **not** "fix a crash" — the guest code that runs is
+stable — it is "**get the title's real init/main to run.**" Open questions for the
+next session:
+
+1. Is `0x824499A0` truly the process entry, or a CRT/thread helper? Re-derive the
+   entry from the XEX (it is `XEX_HEADER_ENTRY_POINT` = `0x824499A0`), then
+   **disassemble the decrypted image at `0x824499A0`** and compare byte-for-byte
+   with the recompiled `xstart` to rule out a decode/boundary error.
+2. Does the title rely on **TLS callbacks / C++ static initializers** that the
+   runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
+3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
+   trampoline (the `xapi_thread_startup` XThread arg, currently 0) rather than
+   directly? Cross-check against how Unleashed/other rexglue titles launch.
+
+**Status:** boots through the **entire rexglue runtime init** and **executes guest
+code without faulting**; the only crash is a runtime *shutdown* bug (input
+teardown), not guest code. **Not yet at a rendered frame** — the executed entry
+returns without starting the game (zero kernel calls). Getting the real init to
+run is the next milestone and the genuine multi-week core of bring-up (per the
+plan's Phase 3 estimate). All tools, patches, evidence and next diagnostics are
+recorded above.
