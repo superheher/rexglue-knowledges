@@ -146,6 +146,19 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   only ran the entry stub; the **STFS package booted the same title to its menu**
   (~14 game threads, GPU draws). Also: **test canary, not just stock**, and check the
   **game-compatibility tracker** for the title ID before concluding it's hard. (`45`)
+- **The recomp crashes but the log just ends (no error) and a live debugger hangs**
+  (D3D12 window / timing). → If the runtime installs no crash handler, a guest fault
+  dies silently. → Add `SetUnhandledExceptionFilter` from a static initializer in the
+  app's `main` (fires only for *unhandled* faults, so it won't fight runtime SEH/MMIO
+  handlers) that writes a file with the faulting address, the AV read/write target, and
+  a **dbghelp `StackWalk64` of the exception `ContextRecord`**. Built RelWithDebInfo, the
+  host stack **names the guest `sub_XXXXXXXX` frames** — turning a silent `0xC0000005`
+  into a located call chain in one run. Decode the AV target: the runtime maps the 4GB
+  guest space at a host base, so a host fault at `base + 0` (e.g. `0x100000000`) is a
+  **guest null-pointer** deref. Far cheaper than running the recomp under cdb. (`80`, `95`)
+- **Pinpoint a guest null/garbage pointer once the function is known**: drop a one-line
+  `REXLOG_WARN` of the suspect register/field at the faulting `sub_*` (and its callers),
+  rebuild, run — the value + the call site localise the root in one pass. (`80`)
 
 ## Numeric correctness
 - **Math drifts / subtle errors near zero.** → **Denormal** handling: FPU keeps,

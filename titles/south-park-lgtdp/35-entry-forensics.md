@@ -39,9 +39,16 @@
 >    batch** cleared the ENTIRE class (0 FATALs).
 > **Verified: boot now reaches GPU rendering init** — `Translated 4 shaders` + `Created 2
 > graphics pipelines` + `SetInterruptCallback`, running ~15s before the next fault.
-> **Next blocker:** an **access violation (`0xC0000005`) at ~15s**, after pipeline creation
-> — a guest null/bad-pointer deref deeper in init (crash ends the log with no line;
-> instrument the suspect deref or run a trace to localise). Then the render/update loop +
+> **Next blocker (LOCATED):** access violation (`0xC0000005`) at ~15s, after pipeline
+> creation. Added an unhandled-fault crash handler (`src/main.cpp`,
+> `SetUnhandledExceptionFilter` + dbghelp `StackWalk64`) → `crash_backtrace.txt`: **WRITE
+> to host `0x100000000` = guest address 0** (runtime maps the 4GB guest space at host 4GB,
+> so this is a **guest null-pointer write**), faulting in `sub_824711D0+0x5A1`, 14 frames
+> deep under `XThread::Execute`: `sub_82450FD0 → sub_82250420 → sub_8211B740 →
+> sub_8211BD60 → sub_8224D470 → sub_82455F80 → sub_824557A8 → sub_82459B00 → sub_82458010
+> → sub_8246F498 → sub_8246F270 → sub_82476FD0 → sub_824712B0 → sub_824711D0`. `sub_824711D0`
+> walks `r31=[r3+24]` and its fields — next: `REXLOG_WARN` the null field in `sub_824711D0`
+> + callers to find which object/field is unset and why. Then the render/update loop +
 > Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` → `tools/fix_recomp_labels.py`
 > → build → run `out/build/.../south_park_td.exe --game_data_root=<repo>\private\extracted`.
 
