@@ -32,6 +32,27 @@ reference for the knobs; rexglue exposes equivalents.
   ]
   ```
 
+### Compile-time symptom: `goto` to an undeclared label
+
+A boundary bug can surface at **compile** time (not just runtime): the codegen
+emits `goto loc_XXXX;` but never defines `loc_XXXX:` in that C function → clang
+`use of undeclared label`. Cause: a caller's declared/PDATA range **overlaps
+another function's entry**, so the analyzer classifies a branch to that entry as
+"internal" (the range "contains" it) yet the block belongs to the other
+function, so no label is emitted. A `b`/`bc` to *another function's entry* is a
+**tail call** and should compile to `other_fn(ctx, base); return;`. Fixes, in
+order of preference: (1) correct the boundary in `[functions]` (give the real
+`size`/`end`, or mark the inner entry a `chunk` of its `parent`); (2) ensure the
+resolver prefers function-entry over internal-label; (3) as a reproducible
+stop-gap, post-process the generated C++ to rewrite each undeclared-label `goto`
+into a tail call (target is a known function) or a guarded trap (otherwise),
+preserving the branch condition. Detect the full set by statically scanning the
+generated TUs rather than discovering them one compile error at a time.
+
+> Related link blocker: a recompiler may register a func-table entry + declaration
+> for the **address-0 null sentinel** (`sub_0`) without emitting its body. Provide
+> a no-op weak stub in your own `src/` (not `generated/`) so it survives codegen.
+
 ## Jump tables (switch statements)
 
 The single most title-specific structural issue.
