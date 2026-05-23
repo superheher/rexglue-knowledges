@@ -74,6 +74,20 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   for `setjmp`/`longjmp`-based titles, set their addresses instead. SEH/longjmp is one of
   the hardest parts of static recomp — expect to implement, not just configure. Bisect with
   a `REXLOG_WARN` of the suspect register before/after each indirect call. (`50`, `80`)
+- **Catching a guest fault stops the crash but doesn't make the work succeed (recover ≠
+  resume).** An SEH "first cut" that wraps functions in host `__try`/`__except` and, on
+  catch, restores the entry frame + returns failure to the caller **prevents the process
+  death** but **kills the faulting guest operation** — if that operation is a worker the
+  rest of the boot waits on, you trade a crash for a **hang** (the waiter never gets its
+  completion signal). The real fix is to *resume* the guest's own handler. Watch for the
+  title's **`RtlRestoreContext`/`longjmp`** — a function that reloads a saved register
+  context (f14–f31/r13–r31/VMX, SP, and a continuation PC from a buffer) then `blr`s to it:
+  static recomp emits that `blr` as a C++ `return`, so it returns to the **caller** carrying
+  the *restored* (setjmp-time) registers → corruption a few instructions later. It's a
+  **non-local jump to a mid-function PC**. If the title uses table-based SEH
+  (`RtlCaptureContext`/`RtlUnwind`/`__C_specific_handler` imports) there is **no guest
+  `setjmp`**, so the `setjmp_address`/`longjmp_address` shortcut does **not** apply — you
+  must implement the exception dispatch + mid-function resume. (`50`, `80`)
 - **Works in Debug, breaks with optimizations.** → An `*_as_local`/`skip_lr`
   assumption (clean ABI / no exceptions) is violated. → Disable the offending
   optimization; only enable opts after a stable boot. (`50`)
@@ -175,6 +189,27 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Pinpoint a guest null/garbage pointer once the function is known**: drop a one-line
   `REXLOG_WARN` of the suspect register/field at the faulting `sub_*` (and its callers),
   rebuild, run — the value + the call site localise the root in one pass. (`80`)
+- **Diagnose a live HANG (not a crash).** When the boot stops progressing (e.g. a black
+  screen) instead of faulting: **attach** cdb to the running process —
+  `cdb -p <pid> -c "~*k 24; qd"` (`qd` detaches and leaves it running) — to dump **all**
+  thread stacks; guest frames symbolize as `module!__imp__sub_XXXXXXXX` (RelWithDebInfo).
+  The "cdb hangs on the D3D12 window" caveat applies to *launching* under cdb, **not
+  attaching**. Sample 2–3 times to see which threads move vs. spin. **Verify rendering** by
+  screenshotting the live window *by handle* (`MainWindowHandle` → `GetWindowRect` →
+  `Graphics.CopyFromScreen`; `PrintWindow` returns black for flip-model D3D swapchains).
+  **Identify an unknown routine** from its `DbgPrint`/format-string arg — the `lis r,hi;
+  addi r,r,lo` pair gives a guest address; read the C string there from the decrypted image
+  (this is how a spin loop was identified as the Xbox-360 D3D9 GPU-hang detector). (`80`, `95`)
+- **Black screen + hang: is it the GPU or game logic?** Sample the command-processor thread.
+  If it's doing swaps/presents (and only *transient* `WAIT_REG_MEM` waits — confirm none is
+  permanently stuck by instrumenting the `WAIT_REG_MEM` poll loop with a spin counter), the
+  GPU is healthy and the game is **presenting black frames while waiting on a worker at the
+  game-logic level** — debug the worker, not the GPU. (`75`, `80`)
+- **An SEH "fault backtrace" finds a recovered-but-dead worker.** If the runtime *catches*
+  guest faults (host `__try`/SEH), an unhandled-fault handler never fires — so a worker that
+  faults-and-is-recovered leaves no crash dump, yet its work never completes and a waiter
+  hangs. Log a **symbolized backtrace from inside the SEH filter** (it has the faulting
+  `ContextRecord`) to locate the dead worker's fault. (`80`)
 
 ## Numeric correctness
 - **Math drifts / subtle errors near zero.** → **Denormal** handling: FPU keeps,
