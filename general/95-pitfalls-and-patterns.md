@@ -88,6 +88,27 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   (`RtlCaptureContext`/`RtlUnwind`/`__C_specific_handler` imports) there is **no guest
   `setjmp`**, so the `setjmp_address`/`longjmp_address` shortcut does **not** apply — you
   must implement the exception dispatch + mid-function resume. (`50`, `80`)
+- **MSVC table-based SEH = the FULL dispatch subsystem, not a config or a host-`__try`
+  wrapper (the hardest part of static recomp; budget weeks).** If the title imports
+  `RtlCaptureContext` + `RtlUnwind` + `__C_specific_handler` and has its own
+  `RtlRestoreContext`, its `__except`/`__finally` handlers are **funclets** — *separate*
+  `sub_<handler>` functions (verify: the handler PC from the `.xdata` scope table is a
+  `DEFINE_REX_FUNC`, not an in-parent label). Consequences, each proven the hard way:
+  (1) A host-`SEH_CATCH` in a *wrapped ancestor* can **never** reach the handler — by the
+  time `RtlRestoreContext` runs, `RtlUnwind` has already unwound the `__try`-owner's frame
+  off the stack, so the handler is reached by a **CONTEXT SWITCH**, not host-stack
+  propagation. Making `RtlRestoreContext` *throw* just propagates to the thread root and
+  kills the worker.
+  (2) A codegen "catch → `goto loc_<handler>`" fails to compile (`use of undeclared label`)
+  because the handler is a funclet, not a label in the parent body.
+  (3) The actual fix is to emulate the dispatch: **`RtlCaptureContext`** must fill the CONTEXT
+  buffer (it's often a no-op stub); **`RtlUnwind`** must walk the `.xdata` scopes, run
+  `__finally`s, and set the resume target; **`RtlRestoreContext`** (`sub_XXXX`, whose tail
+  `blr` jumps to `buf[<pc-offset>]`) must restore the buffer's context and **`REX_CALL_INDIRECT_FUNC(ctx.lr)`** (tail-call the handler funclet) instead of returning;
+  then handle the funclet's continuation (resume after the `__try`) and the filter (pick the
+  scope). All pieces are required together. Do **not** waste cycles on setjmp/longjmp config,
+  host-`__try` wrapping of ancestors, or `RtlRestoreContext`→throw — they cannot work for
+  table-based SEH. (`50`, `80`)
 - **Works in Debug, breaks with optimizations.** → An `*_as_local`/`skip_lr`
   assumption (clean ABI / no exceptions) is violated. → Disable the offending
   optimization; only enable opts after a stable boot. (`50`)
