@@ -307,6 +307,16 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   Route through the XMA decoder; fix conversion. (`75`)
 - **Controller does nothing.** → XInput not bridged. → Map XInput → host
   controller; provide keyboard fallback. (`75`)
+- **Can't verify input from automation (synthetic keys don't register).** → `keybd_event`/
+  `SendInput`/`PostMessage` from a background/agent process often **never reach an SDL game's
+  keyboard layer** (UIPI / session-integrity isolation, or SDL ignoring synthetic input / not
+  having SDL keyboard-focus) — even when `GetForegroundWindow()==game` and a focus
+  transition (minimize→restore, click, AttachThreadInput) is forced. **Confirm** by logging
+  the driver's key handler (e.g. mnk `OnKeyDown`): if it never fires, the keys aren't arriving.
+  ⇒ **Reaching an interactive screen (title/menu) verifies boot+render+asset-load; input then
+  needs a HUMAN at the keyboard/pad.** Do NOT conclude "input is broken" from failed automated
+  injection — verify the *plumbing* by code (guest `XamInputGetState`/`GetKeystroke` →
+  `input_system` → mnk/SDL; driver `has_focus_` default) and have a person press a key. (`75`)
 - **Saves don't persist across runs.** → Content APIs not backed by a stable host
   dir, or serialization endianness. → Back `xam` content with a fixed save dir;
   verify BE serialization. (`75`)
