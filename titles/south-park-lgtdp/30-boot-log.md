@@ -205,6 +205,19 @@ next session:
    on this exact title to see what actually executes from the entry, then
    replicate it (likely: run `.CRT$XC*` initializers, then call the real `main`).
    This is RE/dynamic-analysis work beyond static poking — the multi-week core.
+
+   **Static-init data located (`tools/find_init_arrays.py`).** The decrypted image
+   *does* contain the initializer/vtable code-pointer arrays in early `.rdata`
+   (e.g. `0x82003EB0` ×60, `0x820047B8` ×31, `0x820048D8` ×99, `0x82005018` ×50,
+   then a large vtable block from `0x820DBxxx`). So the C++ static-initializer
+   table (`.CRT$XC*`) exists — the boot simply never runs it. Concrete next steps
+   to wire it up: (a) find `_cinit`/`_initterm` (a function looping `mtctr;bctrl`
+   over an incrementing pointer vs an end bound) and read which array address it
+   passes → that's the real `.CRT$XC` range; (b) run those initializers via the
+   dispatcher (they populate tables like the one at `0x8260E0F0` that `sub_8244EC98`
+   reads); (c) find and call the real `main`. Each is a guest function the runtime
+   can invoke directly. This remains multi-day RE, but the data is all present and
+   the path is concrete.
 2. Does the title rely on **TLS callbacks / C++ static initializers** that the
    runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
