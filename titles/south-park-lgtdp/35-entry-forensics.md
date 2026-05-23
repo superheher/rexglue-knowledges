@@ -63,12 +63,21 @@
 > nonvolatiles are garbage → corruption. rexglue HAS the SEH framework (`src/core/seh_win.cpp`,
 > `SEH_TRY`/`SEH_CATCH_ALL` host `__try/__except`, `SehExceptionInfo` scopes,
 > `generate_exception_handlers`) — it's just disabled + the kernel primitives are stubbed.
-> **FIX PATH (substantial, the condition-A thread):** set `generate_exception_handlers = true`
-> + implement `RtlUnwind`/`__C_specific_handler`/`RtlRaiseException` to drive host SEH so an
-> unwind reaches the right `SEH_CATCH_ALL` (study `seh_win.cpp`; note the catch-all is
-> simplistic so proper `__except` dispatch may also need work — SEH is one of the hardest
-> parts of static recomp), then regen + rebuild. See `general/95`. Reproduce: re-extract →
-> `rexglue -f codegen` → `tools/fix_recomp_labels.py` → build → run `…/south_park_td.exe`.
+> **FIX PATH — TESTED, it's a major SDK feature (not a config tweak):** setting
+> `generate_exception_handlers = true` + regen emits **77 `SEH_TRY`/`SEH_CATCH` wrappers**,
+> confirming the title is SEH-heavy. BUT: (1) rexglue does **not** add the
+> `<rex/platform/exceptions.h>` include → compile error `undeclared identifier 'SEH_TRY'`
+> (codegen bug); (2) **all 77** catch blocks only `REXLOG_WARN(...) + SEH_RETHROW` — pure
+> crash-*reporting*, **zero handler dispatch**; (3) `RtlUnwind_entry`/`__C_specific_handler_entry`
+> are **no-op stubs** and `seh_filter` only accepts hardware-fault codes. So rexglue 0.8 has
+> SEH *plumbing* but **no SEH exception RECOVERY** — which this title fundamentally needs.
+> Reverted the flag (keeps the build green). **Real fix = major work:** either implement SEH
+> recovery in rexglue (generate real `__except` dispatch that runs the guest filter+handler
+> and resumes + a working `RtlUnwind`/raise + guest-frame restore) OR the documented
+> fallback — pivot the CPU stage to **XenonRecomp + a custom runtime** (large; rexglue
+> currently provides the D3D12/audio/input/VFS/kernel runtime). SEH is one of the hardest
+> parts of static recomp. Reproduce the boot: re-extract → `rexglue -f codegen` →
+> `tools/fix_recomp_labels.py` → build → run `…/south_park_td.exe`.
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
