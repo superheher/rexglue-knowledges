@@ -1,10 +1,17 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
-Honest status of the port. **Boots to the TITLE SCREEN** — "SOUTH PARK: LET'S GO TOWER
-DEFENSE PLAY!" with the four boys and **"PRESS START"** (screenshot-verified). The
-recompiled exe brings up the full rexglue runtime, executes the guest CRT + game init, loads
-**TGA image assets**, renders the **animated intro** (Cartman over the South Park town),
-passes the intro movie, and reaches the title menu — boot → intro → title.
+Honest status of the port. **The recomp is INTERACTIVE: boot → intro → title → MAIN MENU →
+LOCAL GAME → LOBBY** (screenshot-verified, and **input works**). The recompiled exe brings up
+the full rexglue runtime, executes the guest CRT + game init, loads **TGA image assets**,
+renders the **animated intro** (Cartman over the South Park town), passes the intro movie, and
+reaches the **title screen** ("PRESS START"); pressing **Start** advances to the **main menu**
+(LOCAL GAME / SCRAPBOOK / LEADERBOARDS / …) and **A** selects LOCAL GAME → the **lobby**
+("1/4 SIGNED IN"). Input was driven/verified with an env-gated mnk injector
+(`REX_INJECT_SCRIPT`) because synthetic OS keys don't reach SDL under automation — the guest
+polls `XamInputGetState` and responds, so the plumbing is correct and a real user with a
+focused pad/keyboard should navigate normally. **Next blockers:** a non-deterministic GPU-fence
+stall (`sub_821C6E58`, pre-input on some runs) and a lobby→match crash (`SEH 0x1A in
+sub_82101AF0`). This is "boot → menu" achieved, with the menu interactive.
 
 **What unblocked it (the long-standing post-render hang):** the hang was NOT standard Win32
 `.xdata` SEH (an early wrong hypothesis) but a **custom hand-rolled `setjmp`/`longjmp`** the
@@ -29,9 +36,9 @@ days of static reasoning. Reference: **Xenia canary boots the title to its menu*
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + ~873 MiB asset tree extracted (corrected STFS math); recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — ~15,000 funcs / 53 TUs → `south_park_td.exe` links & runs. |
 | 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → renders the town backdrop. |
-| 4 Rendering correctness | **Largely working** — the custom setjmp/longjmp image-EH fix unblocked **TGA asset loading**; the recomp renders the **animated intro** (Cartman + town) and the **TITLE SCREEN** ("PRESS START", the four boys) correctly (screenshot-verified). The intro WMV shows black (no WMV/WMA decoder). |
-| 5 Audio/input/save | **In progress** — input plumbing wired (`XamInputGetState`←`input_system`←mnk/SDL); needs real-user verification at the title screen (automated injection unreliable due to desktop focus contention). Audio/save not yet exercised. |
-| 6 Polish / packaging | Not started (gated on menu → match). |
+| 4 Rendering correctness | **Working through the menus** — the setjmp/longjmp image-EH fix unblocked **TGA asset loading**; the recomp renders the **animated intro**, **title screen**, **main menu**, and **lobby** correctly (screenshot-verified). The intro WMV shows black (no WMV/WMA decoder). Open: a non-deterministic GPU-fence stall (`sub_821C6E58`) on some runs; gameplay rendering not yet reached. |
+| 5 Audio/input/save | **Input VERIFIED** — the game polls `XamInputGetState` and **responds** (Start→menu, A→lobby); plumbing `XamInput←input_system←mnk/SDL` is correct. Driven via the env-gated `REX_INJECT_SCRIPT` injector (synthetic OS keys don't reach SDL under automation; a real focused pad/keyboard works). Audio/save not yet exercised. |
+| 6 Polish / packaging | Not started (gated on lobby → match; next bug = `sub_82101AF0` 0x1A). |
 
 ## What is verified working (run, observed, logged)
 
