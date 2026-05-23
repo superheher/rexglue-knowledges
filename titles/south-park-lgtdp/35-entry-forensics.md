@@ -53,14 +53,22 @@
 > caller's `r31` but never restores it, so the recomp's void return leaves `r31` garbage.
 > Hand-adding the epilogue moved the fault to a **READ of `[r1+80]` with `r1≈1`** — the
 > **guest stack pointer `r1` is ALSO corrupted** (by `sub_8242EA70`). So the real blocker is
-> **SYSTEMIC stack/register corruption from a CLASS of functions emitted without epilogues**
-> (last insn `bl <helper>` + padding; the recomp's void `}` never restores `r1`/
-> nonvolatiles). Most likely the game's **setjmp/longjmp / C++-EH** (init.h includes
-> `<csetjmp>`; same theme as the earlier null EH hook `[0x82902438]`): rexglue has
-> `setJmpAddress`/`longJmpAddress` config (`config.h`) that was **never set**. **Next:**
-> identify the guest setjmp/longjmp functions, set them in the config, regen; then revisit
-> the EH-hook fix in that light. Reproduce: re-extract → `rexglue -f codegen` →
-> `tools/fix_recomp_labels.py` → build → run `…/south_park_td.exe --game_data_root=…`.
+> **SYSTEMIC stack/register corruption from unhandled Win32 SEH.** The noreturn the chain
+> hits, `sub_8242EA70`, calls **`__imp__RtlUnwind`** (recomp.29.cpp:20617) — the SEH
+> stack-unwind primitive (noreturn on HW). The game uses **SEH** for error handling (the
+> JPEG "not a valid image" path raises → unwind). **ROOT:** rexglue's `RtlUnwind_entry`
+> (and `__C_specific_handler_entry`) are **no-op STUBS** (xboxkrnl_rtl.cpp; *"do we even
+> need this?"*) and the `generate_exception_handlers` codegen flag is **OFF** — so the
+> unwind silently returns, the post-`RtlUnwind` epilogue runs, and the caller's frame /
+> nonvolatiles are garbage → corruption. rexglue HAS the SEH framework (`src/core/seh_win.cpp`,
+> `SEH_TRY`/`SEH_CATCH_ALL` host `__try/__except`, `SehExceptionInfo` scopes,
+> `generate_exception_handlers`) — it's just disabled + the kernel primitives are stubbed.
+> **FIX PATH (substantial, the condition-A thread):** set `generate_exception_handlers = true`
+> + implement `RtlUnwind`/`__C_specific_handler`/`RtlRaiseException` to drive host SEH so an
+> unwind reaches the right `SEH_CATCH_ALL` (study `seh_win.cpp`; note the catch-all is
+> simplistic so proper `__except` dispatch may also need work — SEH is one of the hardest
+> parts of static recomp), then regen + rebuild. See `general/95`. Reproduce: re-extract →
+> `rexglue -f codegen` → `tools/fix_recomp_labels.py` → build → run `…/south_park_td.exe`.
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed

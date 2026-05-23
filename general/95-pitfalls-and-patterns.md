@@ -65,10 +65,15 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   (`0x00000000`), with no `addi r1`/`ld rNN`/`blr`. On hardware the helper does the
   tail-cleanup or never returns (a `longjmp`/`noreturn`); the recompiler translated the
   `bl` as a plain call + a void return, so `r1`/nonvolatiles are never restored and the
-  guest stack pointer drifts toward 0. → It's the **setjmp/longjmp / C++-EH** path:
-  configure `setjmp`/`longjmp` addresses so those calls are handled as control transfers,
-  not plain calls. Bisect with a `REXLOG_WARN` of the suspect register before/after each
-  indirect call to find the offending callee. (`50`, `80`)
+  guest stack pointer drifts toward 0. → It's the title's **exception/control-transfer**
+  path. Common cause: **Win32 SEH** — a function calls `RtlUnwind` (noreturn on HW: unwinds
+  to a handler), but the runtime stubs `RtlUnwind`/`__C_specific_handler` as no-ops that
+  *return*, and SEH-handler generation is off. Fix: enable the recompiler's SEH-handler
+  generation **and** implement `RtlUnwind`/`__C_specific_handler`/`RtlRaiseException` to
+  drive host `__try/__except` (or a C++ exception) so unwinds reach the right handler;
+  for `setjmp`/`longjmp`-based titles, set their addresses instead. SEH/longjmp is one of
+  the hardest parts of static recomp — expect to implement, not just configure. Bisect with
+  a `REXLOG_WARN` of the suspect register before/after each indirect call. (`50`, `80`)
 - **Works in Debug, breaks with optimizations.** → An `*_as_local`/`skip_lr`
   assumption (clean ABI / no exceptions) is violated. → Disable the offending
   optimization; only enable opts after a stable boot. (`50`)
