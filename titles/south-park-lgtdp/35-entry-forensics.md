@@ -1,5 +1,30 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
+> ## ✅ BOOT CONTINUATION FIXED + VERIFIED IN THE RECOMP (2026-05-23)
+> Two SDK patches make the recomp carry control past the entry trampoline into the
+> boot driver, exactly like Xenia canary:
+> - **0006** (`xthread.cpp` `AllocateStack`): zero the guest stack (`Fill … 0x00`)
+>   instead of `0xBE` poison. Xenia *master* poisons (→ `blr 0xBEBEBEBE` crash); canary
+>   leaves it 0 and boots. Match canary.
+> - **0005** (`xthread.cpp` `XThread::Execute`): after the entry function returns, a
+>   **gated reenter loop** (gate: `address == GetExecutableModule()->entry_point()`)
+>   follows `ctx.lr`; a non-sentinel non-function target (0 — we don't seed the kernel
+>   return slot) **falls through to the body at `entry+0x30`** (`sub_824499D0`). This is
+>   what Xenia's JIT does implicitly by following the `blr`.
+>
+> **Verified by running:** the recomp now logs `Boot continuation: dispatching to
+> 824499D0 (from 824499A0)` and **no longer prints "Execution complete"** — it executes
+> the real boot path (`sub_824499D0`, the XapiThreadStartup body) instead of
+> early-returning. (The mis-placed first attempt in `FunctionDispatcher::Execute` did
+> nothing because the main thread is dispatched by `XThread::Execute`, which calls the
+> entry directly — reverted.)
+>
+> **Next blocker (Phase 3, in progress):** `sub_824499D0` crashes `0xC0000005` at
+> `+0x3c3` (`mov ecx,[r9+r8]`, effective guest addr `~0xb1` = null-base + small offset)
+> — a real recomp boot-path bug (a base pointer that's null in the recomp but valid in
+> canary; r13/PCR/TLS or a global). Being debugged. Patches kept as
+> `south-park-recomp/patches/0005-*` (not committed to the SDK submodule).
+
 > ## ✅ FINAL — source-confirmed from the canary clone (2026-05-23)
 > This block supersedes the `r3=-1` / "needs a cleaner trace" claims further down.
 > Source = a full clone of xenia-canary at `~\xbla-refs\xenia-canary`.
