@@ -245,6 +245,32 @@ title needs that this scaffold lacks: `[rexcrt]` (map guest heap/CRT → native,
 heap all-or-nothing), `setjmp`/`longjmp` addresses, `[functions]`/`[[midasm_hook]]`.
 Concrete next step: scan the recompiled code / `.pdata` for the `__savegprlr_*`-then-
 `stwu r1,-LARGE`-then-multiple-`bl` startup signature to locate the real entry.
+
+### Dynamic trace — entry path proven (not inferred)
+
+Instrumented the generated `xstart`/`sub_8244EC20`/`sub_8244EC28` with `REXLOG_INFO`
+(any function can be traced this way; or instrument `REX_FUNC_PROLOGUE` in the
+generated `*_init.h` for a full guest call trace) and ran:
+
+```
+TRACE xstart entered r3=-1 r1=7018FF00 r4=00000000
+TRACE EC20 entered
+TRACE EC28 entered, [r13+336]=00000000
+```
+
+Confirms **the entire guest execution is the stub chain** `xstart → EC20 → EC28
+→ return` (EC28 does *not* early-return; it stores 0 to `[[PCR+0x100]+0x160]`),
+calling **zero** game/CRT code, then the thread exits → app quits. r3=-1 (our
+launch patch took effect); r4=0. The earlier "cdb bp didn't bind" was a symbol
+artifact — the entry *did* run. So the entry-is-a-stub diagnosis is now
+**dynamically verified**, not just static.
+
+Static search for `_initterm`/`mainCRTStartup` (`tools/find_initterm.py`) returns
+too many small indirect-call-loop candidates to pin uniquely among 20,046
+functions. **The remaining unknown is genuinely "how does this title start on real
+hardware"** — which needs a real-HW/Xenia PC trace of the boot to see what the
+kernel actually runs (the recompiled code is correct; the launch model isn't
+reproduced). That dynamic trace is the single missing input.
 2. Does the title rely on **TLS callbacks / C++ static initializers** that the
    runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
