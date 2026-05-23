@@ -37,6 +37,32 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   assumption (clean ABI / no exceptions) is violated. → Disable the offending
   optimization; only enable opts after a stable boot. (`50`)
 
+## Runtime launch / first guest execution
+- **Links, but "No function registered at \<entry\>" (nothing registers).** → The
+  recompiler emits a function-mapping table that the runtime walks until
+  `guest == 0`, but a legitimate **address-0 entry** (`{0x0, sub_0}`) sorts first
+  and stops the loop immediately. → Drop the address-0 entry (and any entries
+  outside `[code_base, code_base+code_size+thunk_reserve)`, which the runtime may
+  reject and abort on). (`50`)
+- **Entry point faults immediately reading its own stack frame.** → Initial guest
+  **`r1 = stack_base`** sits on the stack's `PAGE_NOACCESS` guard page; a
+  no-prologue XEX entry thunk reads its caller (loader) frame *above* `r1`. →
+  Start `r1` a small 16-byte-aligned amount **below** `stack_base`. (`70`)
+- **Guest `main` returns instantly; game never loops; no game threads spawn.** →
+  XDK entry thunks double as the thread trampoline and run process init only when
+  **`r3 == -1`**; the launcher passed `start_context = 0`. → Launch the main
+  thread with `start_context = 0xFFFFFFFF`. (`70`)
+- **Process crashes on EXIT (nondeterministic AV / `STATUS_HEAP_CORRUPTION`), not
+  during play; runs clean under a debugger.** → A **runtime shutdown/teardown**
+  bug (e.g. input-listener destructor dereferencing a stale pointer), *not* guest
+  memory corruption — a heap-layout Heisenbug. → Catch the throw with
+  `cdb -g -G` + `sxe eh`; read the teardown stack; fix the runtime destructor. (`70`)
+- **Unimplemented PPC instruction aborts a guest thread.** → The recompiler's
+  `REX_UNIMPLEMENTED`/`PPC_UNIMPLEMENTED` macro **throws**; any reached
+  `lmw`/`stmw`/`lq`/`stq`/`lfq*`/`stfq*`/`ba`/`bla`/exotic-VMX op kills that thread.
+  → Implement the op in the recompiler's instruction dispatch/builders (load/store
+  multiple & quad are mechanical loops). (`50`)
+
 ## Numeric correctness
 - **Math drifts / subtle errors near zero.** → **Denormal** handling: FPU keeps,
   VMX flushes; FP state mismanaged. → Ensure per-instruction denormal mode is
@@ -86,6 +112,12 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **A re-codegen wiped your edits.** → You hand-edited **generated** files. → Move
   changes into **config + `src/`** (hooks/overrides); never edit generated code.
   (`80`)
+- **The recompiler emits *uncompilable* constructs you can't fix via config/`src/`**
+  (undeclared-label gotos, a declared-but-undefined sentinel, out-of-range table
+  entries). → Write a **reproducible post-codegen fixup script** (idempotent,
+  documented, re-run after every codegen) rather than hand-editing generated
+  files; provide runtime gaps as small `src/` weak stubs; keep upstream patches as
+  files. (`50`)
 - **A hook stopped working after a TU/opt change.** → The **address moved**. →
   Re-derive addresses; keep a hook registry and re-validate after changes. (`80`)
 - **Knowledge keeps getting re-discovered.** → Findings stayed in one title. →

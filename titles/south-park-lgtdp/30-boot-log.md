@@ -92,6 +92,57 @@ near such a structure would corrupt a host pointer → later AV/heap abort.
 - `tools/cdb_cmds.txt` — cdb command script for crash triage.
 - `patches/0001-rexglue-thread-r1-stack-headroom.patch` — runtime r1 fix.
 
-**Status:** boots through full runtime init and executes the guest entry point;
-**not yet at a rendered frame**. Next: root-cause the early-return/corruption per
-the hypotheses above.
+## UPDATE — corrected root cause (cdb `sxe eh`)
+
+Two more fixes + a debugger pass refined the picture:
+
+- **Fix #6 (runtime patch `patches/0002`):** the XDK entry thunk doubles as the
+  thread trampoline and only runs process init when **`r3 == -1`** (`xstart:
+  cmpwi r3,-1; bne <epilogue>`). `KernelState::PrepareModuleLaunch` launched the
+  main thread with `start_context = 0` → `r3 = 0` → init skipped. Changed it to
+  `0xFFFFFFFF`.
+- **The exit "crash" is NOT guest memory corruption — it is a rexglue runtime
+  *shutdown* bug.** `cdb` with `sxe eh` caught **no** guest C++ exception
+  (so the boot path does *not* hit a `REX_UNIMPLEMENTED` throw — that macro
+  `throw`s `std::runtime_error`). The faulting stack is entirely host teardown:
+
+  ```
+  rexruntime!rex::ui::Window::RemoveInputListener+0xa   (read @ 0xFFFFFFFFFFFFFFFF)
+  rexruntime!rex::input::mnk::MnkInputDriver::~MnkInputDriver
+  rexruntime!rex::input::InputSystem::Shutdown
+  rexruntime!rex::Runtime::Shutdown / ~Runtime
+  south_park_td!rex::ReXApp::OnDestroy → wWinMain
+  ```
+
+  So: the guest entry thread runs and **returns cleanly** ("Execution complete" is
+  logged by `ReXApp::LaunchModule`'s watcher when the entry thread *exits*, then
+  the app quits), and the app then **crashes during input-system teardown** by
+  dereferencing a `0xFFFFFFFF` pointer. Runs clean under cdb (different heap) →
+  the `0xC0000005`/`0xC0000374` Heisenbug.
+
+### Real remaining blockers (re-prioritised)
+
+1. **Functional: the guest entry returns without entering the game loop** and
+   spawns no game threads. It is *not* crashing — `main()`/init runs briefly and
+   returns. Why is the open question (needs guest-execution tracing). Likely a
+   stubbed/unresolved import (74: 42 xboxkrnl + 32 xam) or a missing instruction
+   class returning/te­rminating the init early. Note: cdb breakpoints on the
+   recompiled `__imp__xstart` did not bind reliably against the 67 MB PDB; use
+   build-time guest-function profiling (`REXGLUE_PROFILE_GUEST_FUNCTIONS` + Tracy)
+   or targeted host-call logging instead.
+2. **rexglue input-teardown shutdown AV** (above) — a runtime bug; cosmetic while
+   the game exits immediately, but should be fixed (it masks clean exits and adds
+   nondeterminism). Inspect `MnkInputDriver::~MnkInputDriver` /
+   `Window::RemoveInputListener` for an uninitialised/freed listener pointer.
+3. **~600 unimplemented PPC instructions** (`lmw`/`stmw`/`lq`/`stq`/`lfq*`/`stfq*`/
+   `ba`/`bla`/some VMX). `REX_UNIMPLEMENTED` *throws*, so any of these on a *reached*
+   path aborts that guest thread. None are hit on the entry path yet (per `sxe eh`),
+   but they will gate deeper code. Implement them in rexglue's
+   `instruction_dispatch.cpp` + `builders/` (load/store-multiple and quad are
+   mechanical; FP-quad needs the FPR pair layout).
+
+**Status:** boots through full runtime init and **executes the guest entry point
+without crashing**; the exit crash is a runtime *shutdown* bug, not guest code.
+**Not yet at a rendered frame** — the guest `main` returns early instead of
+looping. This is the genuine multi-week core of bring-up (per the plan's Phase 3
+estimate). Tools, patches, and the exact next diagnostics are recorded above.
