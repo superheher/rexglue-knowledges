@@ -3,7 +3,7 @@
 > ## 🚀 CURRENT STATUS (2026-05-23, latest) — boot past the writer crash; new blocker = a missing function
 > This file is a chronological log; newest first. **Bottom line:** the recomp now boots
 > through the CRT, runs the game subsystem init, and the `sub_8227EB58` null-write crash
-> is **root-caused + fixed (runtime-verified)**. Four fixes, in order of impact:
+> is **root-caused + fixed (runtime-verified)**. Five fixes, in order of impact:
 > 1. **Content corruption** (the big one): my `tools/stfs_extract.py` had an STFS
 >    block-math bug → the recomp ran on a corrupt `default.xex`+assets. Fixed +
 >    re-extracted; `.data` now byte-matches canary.
@@ -21,12 +21,23 @@
 >    body"); persisted as `fix_recomp_labels.py` *Fix 3*. Verified: log now shows `gate=0`,
 >    `callback FIRED`, `ptr8=40323438 v68=403235A0` (valid) → no crash; boot reaches GPU
 >    `SetInterruptCallback`. (Masks a missing hook installer — bring-up shortcut.)
-> **Next blocker:** `[FATAL] Call to invalid or unregistered function at 0x822E38E0` — a
-> **codegen boundary gap** (neighbours `sub_822E38C8/D0/D8/E8/F0` emitted; the 8-byte
-> `sub_822E38E0` between D8 and E8 was missed). Fix = add to rexglue `functions=[…]`
-> config + regen. Then Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` →
-> `tools/fix_recomp_labels.py` → build → run `out/build/.../south_park_td.exe
-> --game_data_root=<repo>\private\extracted`.
+> 5. **Analyzer-missed function `sub_822E38E0`** (verified): an 8-byte jump-table stub
+>    (`addi r3,r3,8; b 0x822E2298`) rexglue didn't emit (siblings C8/D0/D8/E8/F0 were) —
+>    both an indirect-call target and `sub_822E38E8`'s branch target. Hand-emitted +
+>    registered in the func table; persisted as `fix_recomp_labels.py` *Fix 4*. Verified:
+>    boot advances past it (more writer registrations succeed).
+> **Next blocker (SYSTEMIC):** `[FATAL] Call to invalid or unregistered function at
+> 0x82250288` — a CLASS, not a one-off: **vtable-only-referenced methods**. `0x82250288`
+> is mid-`.pdata`-function virtual-dispatch (`lwz r3,0x4C(r3); lwz r11,0(r3); lwz
+> r11,0xC(r11); mtctr; bctrl` inside `sub_822501C8`). rexglue's analyzer scans `.pdata` +
+> direct-call targets but NOT function pointers stored in `.data` vtables, so methods only
+> reachable via a vtable are never emitted → indirect calls hit unregistered addresses.
+> Hand-emitting each won't scale; feed rexglue the full function set instead. Leads:
+> `third_party/rexglue-sdk/src/rexglue/commands/legacy_config.cpp` (XenonRecomp-style TOML
+> with explicit `functions`) + `src/system/map_parser.cpp` (symbol map); or scan `.data`
+> for `0x82100000–0x825F0C18` pointers and add them as functions, then regen. Then Phases
+> 4-6. Reproduce: re-extract → `rexglue -f codegen` → `tools/fix_recomp_labels.py` → build
+> → run `out/build/.../south_park_td.exe --game_data_root=<repo>\private\extracted`.
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
