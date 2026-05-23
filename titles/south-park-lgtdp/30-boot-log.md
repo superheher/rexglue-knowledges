@@ -218,6 +218,33 @@ next session:
    reads); (c) find and call the real `main`. Each is a guest function the runtime
    can invoke directly. This remains multi-day RE, but the data is all present and
    the path is concrete.
+
+## Reference-project comparison (breakthrough)
+
+Compared against working ReXGlue ports (see [[../../general/99-references]]).
+**TiP-Recomp (Viva Piñata — playable)** commits its generated code; its `xstart`
+(entry) is a **normal CRT startup**:
+
+```
+__imp__xstart:  mflr r12; bl __savegprlr_28; addi r31,r1,-496; stwu r1,-496(r1)
+                ... set globals ...; bl 0x82b14580; li r3,1; bl 0x82b0be20;
+                bl 0x82b0acc0; cmpwi r3,0; ...      // real prologue + init + main
+```
+
+i.e. a function **start** with its own prologue (`stwu r1,-496`) that calls the
+init/`main` chain. **South Park's `xstart` has no prologue** — it's the mid-function
+tail of a 0x70-frame utility (`sub_82449968`, called 11×) that just does
+`cmpwi r3,-1; …; epilogue`. So South Park's XEX/PE entry point (`0x824499A0`,
+triple-verified) is **anomalous**: it does not point at a CRT-startup function.
+
+This reframes the blocker precisely: **find South Park's real CRT-startup**
+(the `mflr;bl __savegprlr_*;stwu r1,-LARGE; … _initterm … main` function — a root
+not reached from `0x824499A0`) and either make the runtime start there or hook the
+entry to jump there. Reference configs also show the *supporting* setup a booting
+title needs that this scaffold lacks: `[rexcrt]` (map guest heap/CRT → native,
+heap all-or-nothing), `setjmp`/`longjmp` addresses, `[functions]`/`[[midasm_hook]]`.
+Concrete next step: scan the recompiled code / `.pdata` for the `__savegprlr_*`-then-
+`stwu r1,-LARGE`-then-multiple-`bl` startup signature to locate the real entry.
 2. Does the title rely on **TLS callbacks / C++ static initializers** that the
    runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`

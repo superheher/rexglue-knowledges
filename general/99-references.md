@@ -21,6 +21,33 @@ specifics; treat upstream docs as canonical over this KB where they disagree.
   flagship XenonRecomp+XenosRecomp result; example config (`SWA.toml`),
   switch-table TOML, and runtime patterns to copy.
 
+### ReXGlue reference ports (same toolchain as rexglue-sdk — invaluable)
+Read their `*_config.toml` + `config/*.toml` + `src/` for the working bring-up
+pattern (the bare `rexglue init` scaffold is *not* enough to boot a game):
+- **Viva Piñata: TiP** — https://github.com/SolarCookies/TiP-Recomp — **playable**;
+  config split into `retip_crt.toml` ([rexcrt] heap/CRT→native), `retip_midasm.toml`,
+  `retip_hooked.toml`, `retip_ctx_ctr.toml`; `setjmp_address`/`longjmp_address` set;
+  app overrides path wizard + overlays. **Commits its generated code** — its
+  `xstart` is a model of a normal recompiled CRT entry (prologue +
+  `bl __savegprlr_*` + `stwu r1,-N` + init calls + `main`).
+- **Banjo-Kazooie: Nuts & Bolts (reNut)** — https://github.com/masterspike52/reNut
+  — boots; `renut_crt.toml` [rexcrt] (RtlAllocateHeap/memcpy/str*/…), `[functions]`
+  boundary list, `[[midasm_hook]]` gameplay hooks; clean `renut_app.h`.
+- **Ace Combat 6** — https://github.com/rapidsamphire/AC6Recomp (+ D3D12 fork
+  https://github.com/sal063/AC6_recomp) — D3D/render hooks (`d3d_hooks`,
+  `render_hooks`).
+- **Blue Dragon (reblue)** — https://github.com/zolaware/reblue and the official
+  test repo https://github.com/rexglue/reblue — title screen boots; large reversed
+  engine under `src/bdengine/`.
+
+**Bring-up pattern to copy from these:** map the guest CRT via `[rexcrt]` (heap is
+all-or-nothing), set `setjmp`/`longjmp` addresses, add `[functions]` for
+analyzer-missed boundaries and `[[midasm_hook]]`/function overrides for engine
+fixes, split config across `config/*.toml` via `includes`. A **normal title's
+entry point is a full CRT startup** (`__savegprlr_*` + large frame + `_initterm`
+init + `main`) — if your recompiled `xstart` is a tiny mid-function stub, the
+entry point or its analysis is the problem (see this KB's South Park case study).
+
 ## Emulator / RE sources (the research backbone)
 - **Xenia** — https://github.com/xenia-project/xenia — the single most valuable
   reference for kernel imports, the GPU command stream, and the shader ISA.
