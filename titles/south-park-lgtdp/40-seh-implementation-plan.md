@@ -1,5 +1,38 @@
 # SEH implementation plan — the boot's last blocker (resume after exception)
 
+## ✅✅ SOLVED + VERIFIED 2026-05-24 — it was a CUSTOM setjmp/longjmp, not Win32 SEH
+The post-rendering hang is **fixed**; the recomp now boots to the **TITLE SCREEN**. The
+blocker was a **hand-rolled C++ setjmp/longjmp** the game uses for **image-format detection**
+(NOT `.xdata` table SEH — that whole framing, below, was a wrong turn). Verified by live
+instrumentation:
+- The image loader `sub_82459B00` iterates a format table and tries each decoder. **"Try JPEG"**
+  `sub_82458010` does **`setjmp(buf = r1+720)` via `sub_8242EEA0`** (an EH-hook dispatcher that
+  tail-calls the installed setjmp), runs the JPEG decoder, then `if (r3 != 0) goto fail`.
+- The JPEG parser `sub_824711D0` checks the SOI marker; the asset is a **TGA** (`00 00 02 00`),
+  so it calls its raiseError vtable method `sub_82456198`, which **`longjmp`s via `sub_8242EA70`**
+  (the game's RtlRestoreContext) back to the setjmp → `sub_82458010` returns failure → the loader
+  tries the next format.
+- setjmp & longjmp use the **same buffer** (`vtable+144 == r1+720`, verified live `0x7048EA60`)
+  and the setjmp frame is **alive** at longjmp time → rexglue's `ppc_setjmp/longjmp` models it
+  exactly (its codegen snapshots/restores `ctx` around the host setjmp/longjmp).
+
+**THE FIX (config-only, no SDK change):** manifest `[entrypoint]`:
+`setjmp_address = 0x8242EEA0`, `longjmp_address = 0x8242EA70`; then regen + `fix_recomp_labels`
++ build. (The earlier failed attempt used `setjmp_address = 0x825925CC` = `RtlCaptureContext`,
+a *different* buffer → `ppc_longjmp` no-match → abort. The real setjmp is the **EH-hook
+dispatcher `sub_8242EEA0`**, found by tracing the loader, not the imports.) This also
+supersedes the `fix_recomp_labels` Fix-3 band-aid for `sub_8242EEA0` (ppc_setjmp returns 0 on
+first call = the same "run body" the band-aid forced).
+
+**Follow-on:** the boot then hit `[FATAL] Unresolved call ... to 0x821F23EC` — a cross-function
+`b` rexglue couldn't resolve. Fixed by registering all 18 such unresolved-branch targets in
+`config/sp_functions.toml` (`gen_missing_funcs.py` KNOWN_COMPUTED) + making that script
+cumulative. ⇒ **boots to the title screen.** Everything below is the (long) reasoning trail,
+including the wrong "standard Win32 SEH dispatch" hypothesis — kept for the lessons.
+
+---
+
+
 This is the concrete plan to clear the **current** blocker: the recomp renders the first
 frame, then a worker thread faults during asset load, the SEH first-cut *recovers* it
 (killing the worker), and the main thread hangs waiting on it. The real fix is making the

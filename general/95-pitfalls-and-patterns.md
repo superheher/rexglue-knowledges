@@ -109,6 +109,40 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   scope). All pieces are required together. Do **not** waste cycles on setjmp/longjmp config,
   host-`__try` wrapping of ancestors, or `RtlRestoreContext`→throw — they cannot work for
   table-based SEH. (`50`, `80`)
+- **⚠️ BUT FIRST: is it actually table-based SEH, or a CUSTOM `setjmp`/`longjmp`?** Game
+  engines often roll their **own** C++ exception/error handling (esp. for **image/asset format
+  detection**: "try JPEG → on failure try TGA/PNG"), built on a `setjmp`/`longjmp` pair, NOT
+  the compiler's `.xdata` SEH. South Park: LGTDP looked like SEH (it has a `RtlRestoreContext`
+  = `sub_XXXX` that restores GPRs/FPRs/SP/CR/PC from a CONTEXT buffer then `blr`) but was a
+  **hand-rolled setjmp/longjmp** — and that is *much* easier to fix. **How to tell:** the
+  "restore" function's buffer is the SAME one a `setjmp`-like function filled in a **live
+  ancestor frame** (the loader's "try"), and the call site reads as `tmp = setjmp(buf); if
+  (tmp != 0) goto fail;`. **Find the TRUE pair by tracing the CALLER** (the loader), not the
+  imports — the import `RtlCaptureContext` is often a **red herring** (a different buffer /
+  a different mechanism); the real `setjmp` may be an indirect **EH-hook dispatcher**
+  (`r0=[global]; if r0 call it; else fall through`). **Fix = `setjmp_address`/`longjmp_address`
+  config on the matching pair** (recomp emits `ppc_setjmp`/`ppc_longjmp` + snapshots ctx).
+  Preconditions that make it work (verify all): setjmp & longjmp use the **same guest buffer
+  address**, and the **setjmp frame is still alive** when longjmp fires (nested call). If a
+  prior setjmp_address attempt "regressed / aborted on no-match", it almost certainly used the
+  **wrong setjmp address** (buffers didn't match) — re-derive the pair. (`50`, `80`)
+- **Verify-by-running beats static reasoning for control-flow EH.** Live-instrument the
+  restore site (log `buf`, `buf[pc-offset]`, the path flag) and the parser's reject path (log
+  the bytes it rejects) — that's how the "it's TGA, not JPEG → legit format-detection throw"
+  and "the resume buffer is never captured" facts were nailed in minutes after days of static
+  guessing. A capped `static int n; if(n++<N) LOG(...)` in the generated fn + the runtime
+  import is enough; generated-fn edits are wiped by regen (fine for diagnostics). (`50`)
+- **`[FATAL] Unresolved call ... to 0x...` at runtime = a cross-function `b`/`goto`** the
+  recompiler couldn't resolve to a function entry (a shared block / loop header in another
+  fn). Harvest them all
+  (`grep -rho "Unresolved call from .* to 0x[0-9A-F]*" generated/*.cpp | sed 's/.*to //' | sort -u`),
+  register each as a CONFIG function so the branch becomes a tail-call ("runs that tail").
+  Exclude the import-thunk band. ⚠️ Registering mid-`.pdata` targets can split functions and
+  surface NEW cross-fn branches (whack-a-mole) — iterate; fix only what the boot actually hits.
+- **Make the missing-function generator CUMULATIVE/idempotent.** If it derives "already
+  registered" from the GENERATED code (which already contains config-added funcs), a re-run
+  recomputes `(candidates − registered)` and **silently drops** all prior config entries
+  (we hit 705→25). Union the existing config so the list only grows. (`50`)
 - **Works in Debug, breaks with optimizations.** → An `*_as_local`/`skip_lr`
   assumption (clean ABI / no exceptions) is violated. → Disable the offending
   optimization; only enable opts after a stable boot. (`50`)

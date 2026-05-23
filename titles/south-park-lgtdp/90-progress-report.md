@@ -1,20 +1,25 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
-Honest status of the port. **Boots and RENDERS the game** — not yet playable, but a major
-milestone: the recompiled exe brings up the full rexglue runtime, executes the guest CRT +
-game init, and **draws the South Park town backdrop via D3D12** (screenshot-verified — the
-"SOUTH PARK" sign, snowy mountains, town buildings). It then presents black frames and
-**hangs**: a worker thread faults during image/asset load, the SEH first-cut recovers it by
-killing the thread, and the main thread waits forever on that worker's completion flag.
-Root cause is a **non-local control transfer** — the game's `RtlRestoreContext`/longjmp
-(`sub_8242EA70`) restores a saved register context and jumps (`blr`) to a mid-function
-continuation, which static recomp emits as a plain C++ `return` (so the caller continues
-with corrupted, setjmp-time registers → a guest-null write). The game uses standard Win32
-table-based SEH (`RtlCaptureContext`/`RtlUnwind`/`__C_specific_handler`); the proper fix is
-a fuller SEH implementation in the runtime/codegen (the maintainer's chosen direction).
-Reference: **Xenia canary boots the title to its menu** from the same base `default.xex`
-(compat #1156), so the target is achievable. A large, reusable KB accompanies the journey.
-Updated 2026-05-23.
+Honest status of the port. **Boots to the TITLE SCREEN** — "SOUTH PARK: LET'S GO TOWER
+DEFENSE PLAY!" with the four boys and **"PRESS START"** (screenshot-verified). The
+recompiled exe brings up the full rexglue runtime, executes the guest CRT + game init, loads
+**TGA image assets**, renders the **animated intro** (Cartman over the South Park town),
+passes the intro movie, and reaches the title menu — boot → intro → title.
+
+**What unblocked it (the long-standing post-render hang):** the hang was NOT standard Win32
+`.xdata` SEH (an early wrong hypothesis) but a **custom hand-rolled `setjmp`/`longjmp`** the
+game uses for **image-format detection**: the loader (`sub_82459B00`) tries each decoder;
+"try JPEG" (`sub_82458010`) `setjmp`s a CONTEXT (`sub_8242EEA0`), and because the assets are
+**TGA** (not JPEG) the parser's raiseError (`sub_82456198`) `longjmp`s (`sub_8242EA70`) back
+so the loader tries the next format. setjmp & longjmp share the same buffer (`vtable+144`)
+in a live frame, so rexglue's `ppc_setjmp/longjmp` models it exactly. **Fix = config-only:**
+manifest `setjmp_address=0x8242EEA0` + `longjmp_address=0x8242EA70` (the prior failed attempt
+used the wrong setjmp addr `0x825925CC`=RtlCaptureContext). A follow-on cross-function-branch
+FATAL (`0x821F23EC`) was cleared by registering 18 unresolved-branch targets in
+`config/sp_functions.toml` (+ making `gen_missing_funcs.py` cumulative). Root-caused by **live
+instrumentation** (logging the restore buffer + the bytes the parser rejected), which beat
+days of static reasoning. Reference: **Xenia canary boots the title to its menu** (compat
+#1156). **Next:** PRESS START → main menu → match (input + Phases 4–6). Updated 2026-05-24.
 
 ## Where it got to
 
@@ -23,9 +28,10 @@ Updated 2026-05-23.
 | 0 Prereqs / build rexglue | **Done** — Clang 22.1.6 + rexglue-sdk 0.8.1.4 built & installed (D3D12). |
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + ~873 MiB asset tree extracted (corrected STFS math); recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — ~15,000 funcs / 53 TUs → `south_park_td.exe` links & runs. |
-| 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → **renders the town backdrop (first frame) via D3D12** (screenshot-verified). |
-| 4 Rendering correctness | **In progress** — the first frame renders correctly; the boot then presents black frames and hangs on the SEH worker-fault non-local-jump bug (`sub_8242EA70`). The GPU itself is healthy (it swaps/presents; no fence stall). See [[35-entry-forensics]]. |
-| 5–6 Audio/input/save, polish | Not started (gated on clearing the SEH loading wait → menu). |
+| 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → renders the town backdrop. |
+| 4 Rendering correctness | **Largely working** — the custom setjmp/longjmp image-EH fix unblocked **TGA asset loading**; the recomp renders the **animated intro** (Cartman + town) and the **TITLE SCREEN** ("PRESS START", the four boys) correctly (screenshot-verified). The intro WMV shows black (no WMV/WMA decoder). |
+| 5 Audio/input/save | **In progress** — input plumbing wired (`XamInputGetState`←`input_system`←mnk/SDL); needs real-user verification at the title screen (automated injection unreliable due to desktop focus contention). Audio/save not yet exercised. |
+| 6 Polish / packaging | Not started (gated on menu → match). |
 
 ## What is verified working (run, observed, logged)
 
