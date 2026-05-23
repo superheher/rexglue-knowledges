@@ -19,11 +19,20 @@
 > nothing because the main thread is dispatched by `XThread::Execute`, which calls the
 > entry directly — reverted.)
 >
-> **Next blocker (Phase 3, in progress):** `sub_824499D0` crashes `0xC0000005` at
-> `+0x3c3` (`mov ecx,[r9+r8]`, effective guest addr `~0xb1` = null-base + small offset)
-> — a real recomp boot-path bug (a base pointer that's null in the recomp but valid in
-> canary; r13/PCR/TLS or a global). Being debugged. Patches kept as
-> `south-park-recomp/patches/0005-*` (not committed to the SDK submodule).
+> **Next blocker (Phase 3) — a `.data` global is wrong in the recomp.** `sub_824499D0`
+> crashes `0xC0000005` at generated line 12251 = guest `0x82449ABC: lwz r11,0x10(r11)`.
+> The boot driver does a singleton/vtable call: `r11 = [0x8260E0F0]` (a global), then
+> `[r11+0x10]`, `bctrl`. In the recomp `[0x8260E0F0] = 0x000000A1`, so `[0xA1+0x10] =
+> [0xB1]` faults. The **static** `.data[0x8260E0F0]` (in `private/default_dec.bin`) is
+> already `0x000000A1` — a small int, not a pointer. canary reaches the *same* code as
+> the first guest instructions (the trampoline writes no `.data`, and r31=[stack]=0 →
+> the `r31==0` arm at `0x82449AA4`), yet boots — so canary's `[0x8260E0F0]` is a **valid
+> pointer** there. ⇒ the recomp is missing a **`.data` relocation / load-time fixup**
+> that canary applies (XEX base relocations), or my decrypt mis-handles `.data` (the
+> `.text` matched, but `.data` may differ). **Next: read canary's live `[0x8260E0F0]`
+> (instrumented canary) and check the XEX relocation table; if relocations exist, apply
+> them in the recomp's loader.** Patches kept as `south-park-recomp/patches/0005-*` (not
+> committed to the SDK submodule).
 
 > ## ✅ FINAL — source-confirmed from the canary clone (2026-05-23)
 > This block supersedes the `r3=-1` / "needs a cleaner trace" claims further down.
