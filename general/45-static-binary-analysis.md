@@ -69,6 +69,30 @@ thousands. To actually locate `main` you then need either a **dynamic trace** or
 **decompiler with indirect-xref/data-flow analysis (Ghidra/IDA)** — plain symbol
 scanning won't cut it. Budget for that; don't burn days on direct-call heuristics.
 
+### Finding `mainCRTStartup`/the CRT entry — what *doesn't* work in a heavy C++ title
+
+When the XEX entry is a stub and you must find the real CRT startup, these signature
+hunts each have a clean theory but **all drown in C++ noise** in a vtable/singleton-
+heavy title (verified on a real case — see the title study's "one more shot" table):
+
+- **`_initterm` by shape** (`bctrl` + `addi r,r,4` + bounds `cmplw`) → matches every
+  pointer-array loop and every vtable-dispatch loop.
+- **init-array bounds** (a function forming two `.rdata` addresses bounding a run of
+  `.text` pointers, i.e. `_initterm(&__xc_a,&__xc_z)`) → matches the title's many C++
+  **constructors** storing vtables; `.CRT$XC` is buried among them.
+- **`__security_cookie`** (the `.data` global with ~1 writer + many readers, written by
+  `__security_init_cookie` which `mainCRTStartup` calls first) → matches **game
+  singleton pointers** (one init site, hundreds of readers) instead.
+- **Ghidra headless** auto-analysis on a raw blob can *miss* the CRT entry entirely
+  (it's a root not reached from the stub entry; prologue scanning is incomplete) and
+  its "top roots by out-degree" are game logic, not the low-out-degree CRT startup.
+
+Practical guidance: don't expect headless heuristics to pin the CRT entry in such a
+binary. Use an **interactive** decompiler (navigate from the `.CRT` section / the
+init array / `exit`/terminate imports, with a human reading the decompiled C), or get
+a **dynamic trace**. Also remember capstone needs `skipdata=True` to scan `.text`
+linearly past VMX128/data-in-code, or it stops at the first byte it can't decode.
+
 ## What this buys the recompiler
 
 Even when it doesn't crack the boot, this analysis directly improves codegen: feed

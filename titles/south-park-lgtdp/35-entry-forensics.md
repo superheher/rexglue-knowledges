@@ -95,6 +95,33 @@ So three independent tools (capstone, `.pdata`, Ghidra) agree: the entry is a st
 and the real boot trigger is **not statically reachable from the title** — it is
 kernel/loader behaviour. A **dynamic boot trace is now the decisive next step.**
 
+## "One more shot": hunting `mainCRTStartup` to start there — defeated headlessly
+
+The plan was to find the real `mainCRTStartup` and configure the runtime to start
+there (the runtime override is ready: a `REX_ENTRY_OVERRIDE` env-var hook for
+`user_module.cpp` after it reads `XEX_HEADER_ENTRY_POINT`). Finding it failed via
+**every** headless method tried — this binary is exceptionally hostile to static
+analysis:
+
+| Method (tool) | Why it failed here |
+|---|---|
+| Direct + resolved call graph (`callgraph`, Ghidra `getCalledFunctions`) | Calls are overwhelmingly **indirect (vtables/singletons)**; `_initterm`/`main` have 0 direct callers; thousands of "roots". |
+| `_initterm` pattern: `bctrl`+`addi r,r,4`+`cmplw` (`find_crt initterm`) | Matches **any pointer-array loop** — 127 hits, all noise. |
+| "calls 2+ `_initterm`-shaped" (`find_crt maincrt`) | Hits **vtable-dispatch loops**, returns mid-function fragments. |
+| Clean Ghidra decompiler, top roots by out-degree (`ghidra_dump_roots`) | Top roots are **game logic**; Ghidra found only 7.5k funcs (missed many) and `mainCRTStartup` (low out-degree, kernel-called) didn't surface. |
+| Init-array bounds `lis`+`addi` forming a `.text`-pointer run (`find_crt_initarray`) | Matches the title's **many C++ constructors/vtable setups** (e.g. `0x82104328` is a ctor storing vtables), not `.CRT$XC`. |
+| `__security_cookie` = global with 1 writer/many readers (`find_security_cookie`) | Top hit `0x828F2D2C` (736 readers) is a **game singleton pointer**, not the cookie; its writer is a singleton accessor. |
+
+Even capstone can't linearly decode `.text` (VMX128 / data-in-code; needs
+`skipdata`). **Net: `mainCRTStartup` cannot be reliably pinned with headless
+static analysis of this title.** And there is a deeper paradox: the XEX entry is a
+*stub*, nothing calls it, and it doesn't call `mainCRTStartup` — so in the normal
+flow `mainCRTStartup` is **never invoked** (yet the game shipped). That can only be
+reconciled by a boot mechanism outside "call the XEX entry," which neither Xenia
+version reproduces. Cracking it needs **interactive Ghidra/IDA** (a human-driven
+decompiler session — the maintainer has Ghidra + RE expertise) or a **real-hardware
+boot trace**; both are beyond headless autonomous static analysis.
+
 ## Conclusion / where the unblock must come from
 
 `mainCRTStartup -> _initterm -> main` exists in the image (the game runs on HW) but
