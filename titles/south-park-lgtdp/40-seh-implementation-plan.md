@@ -83,6 +83,26 @@ The structure that works (goto OUT of a host `__except` to an enclosing label IS
 Build cycle per iteration: SDK build (function_graph.cpp + runtime) → `rexglue -f codegen`
 → `fix_recomp_labels.py` → app rebuild. Keep the committed stable baseline to revert to.
 
+### ATTEMPTED 2026-05-24 (host-SEH-CATCH dispatch) — blocked on missing handler labels (REVERTED)
+Implemented pieces 2+3 (restart label + resume-dispatch + CATCH `__seh_resume=handler; goto
+__seh_restart`) using a **function-local** `__seh_resume` (no TLS needed). The SDK + the
+dispatch *structure* compiled, and the codegen emitted it for **33 functions**. BUT the app
+build **failed widely** with `error: use of undeclared label 'loc_<handler>'` (recomp.13/17/
+19/28/30/…). So **piece 1 is NOT actually satisfied**: `phase_register.cpp:657`
+`addLabelToFunction(scope.handler)` adds the handler to `labels_`, yet the body emitter does
+**not** always emit a `loc_<handler>:` — the handler PC isn't a reachable block boundary in
+the emitted instruction stream (mid-block, or outside the function's emitted range). ⇒ Before
+the catch can `goto` the handler, the **body/label emitter must emit a `loc_` at every
+`__except` handler PC** (force a block boundary there; verify it's within the emitted range).
+Also note: even with that, the exception must **propagate** — `sub_8242EA70`
+(`RtlRestoreContext`) currently *returns-corrupted* (a normal return), so nothing reaches a
+CATCH; it must **throw** (`seh_raise_guest_unwind`, e.g. a codegen special-case on its body)
+for the dispatch to fire, AND the throw must land on the frame whose `__except == buf[308]`
+(my first-cut jumps to the catching function's *first* `__except`, which needs the filter to
+disambiguate). Net: the correct approach needs (a) reliable handler-label/block emission,
+(b) RtlRestoreContext→throw, (c) scope/filter selection — genuinely multi-day. Reverted to
+the stable recover-to-caller baseline.
+
 The sections below are the reasoning trail (the setjmp/longjmp "approach B" is historical).
 
 ## What the title actually uses (observed)
