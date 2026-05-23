@@ -165,10 +165,28 @@ So the top Phase-3 task is **not** "fix a crash" — the guest code that runs is
 stable — it is "**get the title's real init/main to run.**" Open questions for the
 next session:
 
-1. Is `0x824499A0` truly the process entry, or a CRT/thread helper? Re-derive the
-   entry from the XEX (it is `XEX_HEADER_ENTRY_POINT` = `0x824499A0`), then
-   **disassemble the decrypted image at `0x824499A0`** and compare byte-for-byte
-   with the recompiled `xstart` to rule out a decode/boundary error.
+1. ~~Is `0x824499A0` truly the process entry / decode correct?~~ **RESOLVED.**
+   Built an independent decrypt+decompress (`tools/xex_decrypt.py`: retail AES key
+   → session key via ECB → CBC decrypt → basic-block decompress; verified — image
+   starts `MZ`, size `0x930000`). Findings: (a) the entry `0x824499A0` is
+   confirmed by **both** the XEX `ENTRY_POINT` header **and** the embedded PE
+   `AddressOfEntryPoint`; (b) rexglue's decode there is **byte-exact correct**
+   (`2F03FFFF`=`cmpwi r3,-1`, `48005275`=`bl 0x8244EC20`, …) — *not* a decode bug;
+   (c) the entry is the **tail of function F** whose real start is `0x82449968`
+   (prologue `mflr; stw r12,-8; std r31,-16; stwu r1,-0x70` at `0x82449968`–`74`).
+   rexglue keeps F as `sub_82449968` (a utility **called 11×**) **and** emits a
+   duplicate tail as `xstart` at the entry. F's body (before the entry) does
+   `bl 0x8244EC98`, which does an **indirect `bctrl` through a data pointer at
+   `0x8260E0F0`** (vtable/dispatch — real init that depends on initialized data).
+   From the entry (F's tail) only the two trivial PCR helpers (`sub_8244EC20/EC28`)
+   are reachable; the game's big functions are not. **Conclusion: codegen is
+   correct; this is a startup-model problem** — entering at the authoritative entry
+   (which is F's tail) does not bootstrap the game. Next: compare against how
+   Xenia executes *this* title; investigate the CRT `_initterm`/static-init path
+   and what initializes the dispatch table at `0x8260E0F0`; determine why the
+   entry is the tail of a utility (linker ICF/COMDAT folding?) and what the real
+   bootstrap root is (look for an unreferenced root function that reaches the big
+   functions like `sub_82392840`).
 2. Does the title rely on **TLS callbacks / C++ static initializers** that the
    runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
