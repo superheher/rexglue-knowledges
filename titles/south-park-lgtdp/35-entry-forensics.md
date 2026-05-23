@@ -108,6 +108,34 @@ behaviour and/or hidden behind indirect calls). The two viable unblocks:
    indirect call graph and locates `main`; then the runtime entry can be overridden
    to `mainCRTStartup` and the boot re-tried empirically.
 
+## Dynamic trace via Xenia — setup (in progress)
+
+Set up **Xenia canary** as a boot-trace oracle (download `xenia_canary_windows.zip`
+from `xenia-canary/xenia-canary` releases). Config for a clean, max-detail boot log
+(`xenia-canary.config.toml`):
+
+- `[Content] license_mask = 1` — **required** for XBLA titles to pass the license
+  check; with the default `0` the title load never even starts.
+- `[General] discord = false` — `discord = true` makes `DiscordPresence::Initialize()`
+  **hang** at startup (right after the "Cache root" log) when no Discord client /
+  in an automated session.
+- `[Logging] log_level = 3` (debug), `log_mask = 0` (all categories),
+  `log_file = "...xenia_boot.log"`, `flush_log = true`.
+- `[GPU] gpu = "d3d12"` (or `null` for CPU-only), `[APU] apu = "nop"`.
+
+**Gotcha — can't drive it fully headless from automation:** in a non-interactive
+shell context Xenia hangs at `EmulatorWindow::Create()` (window needs an interactive
+desktop; CPU ~0%, ~28 MB, won't progress). Worse, in this build the **CLI title
+launch did not fire** by any form tried (positional, `--target=`, `-- <path>`, for
+both a loose `.xex` and the STFS package) — Xenia opens its library window and idles
+with `cvars::target` empty (no "Loading module" / "Failed to launch target" logged).
+So the title must be opened via the **GUI** (drag-drop / File-Open) in an interactive
+session. That one GUI action is the maintainer hand-off point.
+
+Once a log is captured it should show module load, **main-thread creation with its
+entry address**, the kernel-call sequence, and whether South Park reaches a frame in
+Xenia — which will finally reveal how the real boot is triggered vs. the stub entry.
+
 Both are larger efforts; this is the genuine multi-week core of bring-up the
 feasibility note ([[00-feasibility]]) predicted. Up to this point — extract →
 recompile → build → boot the runtime → execute guest code → fully characterise the

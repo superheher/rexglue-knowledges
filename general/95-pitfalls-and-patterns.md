@@ -102,6 +102,19 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   **data-in-code** misread as instructions (clustered odd ops like `lfqu`/`lq`
   next to "unable to decode" usually mean a data region to mark, not code). (`50`)
 
+## Dynamic analysis (Xenia as a boot-trace oracle)
+- **Title load never starts in Xenia (XBLA).** → `[Content] license_mask = 0`
+  blocks the license check. → Set `license_mask = 1`. (`45`)
+- **Xenia hangs at startup right after the "Cache root" log.** → `discord = true`
+  → `DiscordPresence::Initialize()` blocks with no Discord client / in automation.
+  → Set `discord = false`. (`45`)
+- **Xenia hangs at `EmulatorWindow::Create()` / won't launch a title from the
+  command line in an automated (non-interactive) shell.** → It needs an interactive
+  desktop to create its window, and (at least in canary) the CLI title launch
+  (positional / `--target=` / `-- <path>`) may not fire. → Open the title via the
+  **GUI** in a real logged-on session; set `log_file`/`log_level=3`/`log_mask=0`
+  for the trace. (`45`)
+
 ## Numeric correctness
 - **Math drifts / subtle errors near zero.** → **Denormal** handling: FPU keeps,
   VMX flushes; FP state mismanaged. → Ensure per-instruction denormal mode is
