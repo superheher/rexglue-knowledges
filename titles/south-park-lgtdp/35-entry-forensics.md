@@ -1,22 +1,32 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
-> ## 🚀 CURRENT STATUS (2026-05-23, latest) — recomp boots through the CRT
-> This file is a chronological log; newest first. **Bottom line:** the recomp now
-> **executes the guest CRT boot** — `XThread::Execute → xstart → sub_82249638 →
-> sub_82249678 → sub_82252EA8 → sub_8227ED00 → sub_8227EB58` (+ dynamic xam import
-> resolution) — before faulting on a **guest null-pointer write** in `sub_8227EB58`
-> (`mov [r9+rcx],eax`, r9=0). This took three fixes, in order of impact:
+> ## 🚀 CURRENT STATUS (2026-05-23, latest) — boot past the writer crash; new blocker = a missing function
+> This file is a chronological log; newest first. **Bottom line:** the recomp now boots
+> through the CRT, runs the game subsystem init, and the `sub_8227EB58` null-write crash
+> is **root-caused + fixed (runtime-verified)**. Four fixes, in order of impact:
 > 1. **Content corruption** (the big one): my `tools/stfs_extract.py` had an STFS
 >    block-math bug → the recomp ran on a corrupt `default.xex`+assets. Fixed +
 >    re-extracted; `.data` now byte-matches canary.
 > 2. **Boot continuation** (patches 0005/0006): zero the stack (not `0xBE`) + a gated
->    reenter in `XThread::Execute`, so the XapiThreadStartup trampoline flows into the
->    body. (With the corrected `.pdata`, codegen now keeps entry+body as one function.)
+>    reenter in `XThread::Execute`, so the XapiThreadStartup trampoline flows into the body.
 > 3. **Missing imports**: 7 `XUsbcam` stubs in `src/stubs.cpp`.
-> **Next blocker:** the null write in `sub_8227EB58` (a CRT/boot pointer left null — a
-> stubbed kernel fn returning null, an uninitialized global, or a failed guest alloc),
-> then Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` →
-> `tools/fix_recomp_labels.py` → build → run via `out/build/.../south_park_td.exe`.
+> 4. **Null EH hook → skipped init (NEW, the writer crash):** `sub_8227EB58` deref'd a
+>    null `[writer+8]`. Traced with `REXLOG_WARN` probes: the writer (`sub_82277958`) is
+>    init'd by callback `sub_82277570`, which `sub_8226F978` runs **only if `sub_8242EEA0`
+>    returns 0**. `sub_8242EEA0` calls a runtime hook `[0x82902438]` if non-null, else
+>    falls through leaving `r3` = stale `&localbuf` (non-zero). The hook is **image-init 0**
+>    (verified via xex_decrypt) and **never installed** before the worker thread uses it →
+>    gate sees non-zero → callback SKIPPED → `[writer+8]=0`,`[writer+68]=0` → null write.
+>    **Fix:** `sub_8242EEA0` returns `r3=0` on the null-hook path ("no EH infra → run
+>    body"); persisted as `fix_recomp_labels.py` *Fix 3*. Verified: log now shows `gate=0`,
+>    `callback FIRED`, `ptr8=40323438 v68=403235A0` (valid) → no crash; boot reaches GPU
+>    `SetInterruptCallback`. (Masks a missing hook installer — bring-up shortcut.)
+> **Next blocker:** `[FATAL] Call to invalid or unregistered function at 0x822E38E0` — a
+> **codegen boundary gap** (neighbours `sub_822E38C8/D0/D8/E8/F0` emitted; the 8-byte
+> `sub_822E38E0` between D8 and E8 was missed). Fix = add to rexglue `functions=[…]`
+> config + regen. Then Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` →
+> `tools/fix_recomp_labels.py` → build → run `out/build/.../south_park_td.exe
+> --game_data_root=<repo>\private\extracted`.
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
