@@ -24,7 +24,7 @@ stwu r1,-0x70`). Full disassembly of that function:
 ```
 82449968  mflr r12; stw r12,-8(r1); std r31,-0x10(r1); stwu r1,-0x70(r1)  ; PROLOGUE
 82449978  mr r31,r4 ; addi r4,r1,0x50
-82449980  bl 0x8244EC98            ; kernel-query helper (indirect via table @0x8261E0F0[+0x20])
+82449980  bl 0x8244EC98            ; kernel-query helper (indirect via table @0x8260E0F0[+0x20])
 82449984  cmpwi r3,0 ; beq 0x824499B8
 8244998C  cmplwi cr6,r31,0 ; beq cr6,0x8244999C
 82449994  lwz r11,0x50(r1) ; stw r11,0(r31)
@@ -70,6 +70,30 @@ at the XEX entry and call it" is therefore insufficient for this title.
   3,045-entry vtable run at `0x820DBC7C`). Every `_initterm`-shaped function shows
   **0 direct callers**, so `mainCRTStartup`/`main` cannot be reached by walking
   `bl` edges. `find_initarray.py` finds vtables, not a small CRT init array.
+
+## Cross-check with Ghidra (headless, PowerPC:BE:64)
+
+Imported the decrypted image into **Ghidra 11.4.2** headless (raw binary, base
+`0x82000000`, `.pdata` starts pre-defined; `tools/ghidra_pre_funcs.py` +
+`tools/ghidra_find_main.py`). Result **confirms** the static finding and adds
+nothing that contradicts it:
+
+- `FUN_824499a0` (the entry) has **0 callers** and **callees = {`8244ec20`}** —
+  i.e. Ghidra agrees the entry only reaches the trivial TLS-store stub.
+- The "small functions called by the most roots" are `8242ce98`/`8242ce9c`
+  (387/435 root callers) = `__savegprlr`/`__restgprlr` (GPR save/restore helpers),
+  **not** `_initterm`.
+- The call graph stays **indirect-dominated** even under Ghidra's analysis: the
+  top "roots" by out-degree (`FUN_82376078` out=33, etc.) are **game-logic
+  fragments** (they start with `lwz rX,0xNNN(r31)` on an already-set base pointer —
+  no prologue), reached only by fall-through/branch, not `bl`. So a clean
+  `mainCRTStartup`/`main` does **not** fall out of the static call graph.
+  (Lesson: feeding imperfect `.pdata` starts as functions can split functions and
+  pollute the graph — let Ghidra auto-find functions, or use clean boundaries.)
+
+So three independent tools (capstone, `.pdata`, Ghidra) agree: the entry is a stub,
+and the real boot trigger is **not statically reachable from the title** — it is
+kernel/loader behaviour. A **dynamic boot trace is now the decisive next step.**
 
 ## Conclusion / where the unblock must come from
 
