@@ -1,5 +1,57 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
+> ## ✅ FINAL — source-confirmed from the canary clone (2026-05-23)
+> This block supersedes the `r3=-1` / "needs a cleaner trace" claims further down.
+> Source = a full clone of xenia-canary at `~\xbla-refs\xenia-canary`.
+>
+> **The XEX entry `0x824499A0` is the common XapiThreadStartup trampoline** — run by
+> *every* guest thread, not just main. That is why the aggregated `ftrace.0`
+> per-instruction counts show **both** arms of its `r3==-1` test executing (different
+> threads take different arms). It is *not* evidence that the main thread uses `r3=-1`.
+>
+> **Main thread launch (authoritative):** `KernelState::LaunchModule`
+> (`kernel/kernel_state.cc:417`):
+> `new XThread(ks, module->stack_size(), 0, module->entry_point(), 0, X_CREATE_SUSPENDED, …)`
+> → `xapi_thread_startup = 0`, `start_address = 0x824499A0`, **`start_context = 0`**
+> (so **r3 = 0**, not −1). `XThread::Execute` takes the *else* (raw) branch
+> (`address=start_address`, `args=[start_context]`, `want_exit_code=true`). The reenter
+> loop only fires on `FiberReentryException`/`longjmp` from `Reenter()`
+> (`KeSetCurrentStackPointers`), which **South Park never calls** (absent from the
+> boot log). **⇒ keep patch 0002 (start_context→−1) REVERTED — canary uses 0.** Either
+> arm of the trampoline reaches the *same* epilogue and `blr`s to `[r1+0x68]`, so r3
+> does not change the continuation anyway.
+>
+> **canary `Processor::Execute` == rexglue `FunctionDispatcher::Execute`** byte for
+> byte (`ctx.r1 -= 64+112`; `ctx.lr = 0xBCBCBCBC`; call; restore). The args overload
+> (`processor.cc:413`) only writes the stack when `arg_count > 7` — the 1-arg main
+> thread writes **nothing**. The **only** functional difference between emulator and
+> recomp is `blr`: canary's JIT follows it to `ctx.lr`; rexglue's static `build_blr`
+> emits C++ `return;` (`codegen/builders/control_flow.cpp:94`) with no dispatch.
+>
+> **The airtight contradiction (the real open problem).** The trampoline's epilogue
+> sets `ctx.lr = [r1+0x68] = [stack_base-0x68]` (`0x7018FFB8` on main) and `blr`s
+> there. I checked *every* path that could populate that slot — `XThread::Create` /
+> `AllocateStack` (only TLS is zeroed; guard pages at `stack_base`), `ThreadState`
+> ctor (`r[1]=stack_base`), both `Processor::Execute` overloads — **none writes it**,
+> and guest memory is zeroed on alloc (`memory.cc:699 Zero`). So the static model
+> predicts `[r1+0x68]=0` → `blr 0` → `ResolveFunction(0)` fails → `Execute` returns →
+> thread exits. **Yet canary reliably boots to the menu.** Something at runtime
+> (heap-reuse leftover, or JIT indirect-branch handling of a 0/invalid target) supplies
+> the continuation in a way static source-reading cannot reveal. In **stock** master
+> the same slot is poison (`0xBE…`) → the documented `blr 0xBEBEBEBE` crash; canary
+> differs only by not poisoning.
+>
+> **Recomp defect & fix.** `build_blr=return` discards the `[r1+0x68]` continuation.
+> The fix needs (a) the **actual continuation value** and (b) a dispatch (write it onto
+> the main-thread stack + reenter loop, or special-case the trampoline). (a) is the
+> blocker and is **only obtainable live**.
+>
+> **NEXT (the chosen "build canary with tracing" path):** instrument the clone with a
+> ~2-line log — print `ctx.lr` at the trampoline `blr` (`0x824499CC`), or log the first
+> few `Processor::ResolveFunction` calls on the main thread — build canary, run the
+> STFS package, read the continuation address from the log. That single value unblocks
+> the recomp boot.
+
 > ## ⚠️ CORRECTION (2026-05-23, later same day) — the title DOES boot in Xenia
 > The earlier "does not boot in Xenia / research-grade" verdict in this file was
 > **WRONG**, caused by a *setup error*: I tested the **loose extracted `default.xex`**.
