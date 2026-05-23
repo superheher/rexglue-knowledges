@@ -96,11 +96,14 @@ near such a structure would corrupt a host pointer → later AV/heap abort.
 
 Two more fixes + a debugger pass refined the picture:
 
-- **Fix #6 (runtime patch `patches/0002`):** the XDK entry thunk doubles as the
-  thread trampoline and only runs process init when **`r3 == -1`** (`xstart:
-  cmpwi r3,-1; bne <epilogue>`). `KernelState::PrepareModuleLaunch` launched the
-  main thread with `start_context = 0` → `r3 = 0` → init skipped. Changed it to
-  `0xFFFFFFFF`.
+- **Fix #6 (runtime patch `patches/0002`) — ⚠️ LATER DISPROVED & REVERTED, see the
+  Xenia cross-check section below.** *Hypothesis at the time:* the XDK entry thunk
+  doubles as the thread trampoline and only runs process init when **`r3 == -1`**
+  (`xstart: cmpwi r3,-1; bne <epilogue>`); `KernelState::PrepareModuleLaunch`
+  launched with `start_context = 0` → `r3 = 0` → init skipped; so it was changed to
+  `0xFFFFFFFF`. *Why this was wrong:* Xenia (the proven, game-running emulator
+  rexglue is based on) launches **every** title with `start_context = 0` (`r3 = 0`).
+  The entry returns regardless of `r3` — it's a stub. Patch reverted.
 - **The exit "crash" is NOT guest memory corruption — it is a rexglue runtime
   *shutdown* bug.** `cdb` with `sxe eh` caught **no** guest C++ exception
   (so the boot path does *not* hit a `REX_UNIMPLEMENTED` throw — that macro
@@ -264,6 +267,13 @@ calling **zero** game/CRT code, then the thread exits → app quits. r3=-1 (our
 launch patch took effect); r4=0. The earlier "cdb bp didn't bind" was a symbol
 artifact — the entry *did* run. So the entry-is-a-stub diagnosis is now
 **dynamically verified**, not just static.
+
+> Note: this trace was taken with the (since-reverted) `r3 = -1` patch, so it shows
+> the fall-through `xstart → EC20 → EC28 → return` path. Under the **correct**
+> launch (`r3 = 0`, see the Xenia cross-check below) the `bne cr6` is taken and the
+> entry returns *even more directly* — `xstart → return`, not even reaching
+> EC20/EC28 (re-verified by trace: `TRACE xstart entered r3=0`, no EC20/EC28).
+> Conclusion is unchanged and stronger: **zero** game/CRT code runs either way.
 
 Static search for `_initterm`/`mainCRTStartup` (`tools/find_initterm.py`,
 `tools/find_maincrt.py`) cannot pin it: of 20,046 functions, **11,656 are "roots"**

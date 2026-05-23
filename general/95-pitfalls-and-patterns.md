@@ -48,10 +48,14 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   **`r1 = stack_base`** sits on the stack's `PAGE_NOACCESS` guard page; a
   no-prologue XEX entry thunk reads its caller (loader) frame *above* `r1`. →
   Start `r1` a small 16-byte-aligned amount **below** `stack_base`. (`70`)
-- **Guest `main` returns instantly; game never loops; no game threads spawn.** →
-  XDK entry thunks double as the thread trampoline and run process init only when
-  **`r3 == -1`**; the launcher passed `start_context = 0`. → Launch the main
-  thread with `start_context = 0xFFFFFFFF`. (`70`)
+- **Guest `main`/entry returns instantly; game never loops; no game threads
+  spawn.** → *Tempting but usually wrong* hypothesis: "the entry is a thread
+  trampoline that only runs init when `r3 == -1`, so launch with
+  `start_context = 0xFFFFFFFF`." We tried this on South Park and **disproved it**
+  against Xenia (see next item) — the canonical launch passes `start_context = 0`
+  (`r3 = 0`). Do **not** flip `r3` on a hunch. → First confirm what the entry
+  actually does at that `r3` (trace it); if it returns regardless of `r3`, the
+  entry is a **stub/anomaly**, not a launch bug. (`70`)
 - **Recompiled entry runs but the game never starts — is it the launch or the
   binary?** → Cross-check your runtime's main-thread launch against **Xenia's
   `KernelState::LaunchModule`** (the canonical model: one `XThread` at the XEX

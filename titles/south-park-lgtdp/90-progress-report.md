@@ -32,8 +32,12 @@ point**. Guest code that runs does **not** crash (proven with `cdb sxe eh`).
 4. **Runtime aborted on 41 out-of-range table entries** → range filter drops them.
 5. **Entry faulted on the stack guard page** — initial `r1 = stack_base` → reserve
    headroom below it (runtime patch `0001`).
-6. **Entry skipped init** — main thread launched with `r3 = 0`; the XDK entry runs
-   init only when `r3 == -1` → launch with `0xFFFFFFFF` (runtime patch `0002`).
+6. **`lmw` epilogues threw `REX_UNIMPLEMENTED`** — codegen had `stmw` but not its
+   load mirror → implemented `build_lmw` (runtime patch `0003`; `lmw` 119 → 0).
+
+*(A 7th change — launching with `r3 = 0xFFFFFFFF` on the theory the entry runs init
+only when `r3 == -1`, patch `0002` — was later **disproved against Xenia and
+reverted**; the entry returns regardless of `r3`. See [[30-boot-log]].)*
 
 Plus the exit crash was correctly attributed to a **rexglue input-teardown bug**
 (not guest corruption).
@@ -52,8 +56,10 @@ lifting; none of the blockers were research-grade — they were bring-up plumbin
   pre-decompression (`20`).
 - The recompiler-output gotchas now in `95`: undeclared-label gotos, the
   zero-terminated func-table + address-0 entry, out-of-range table entries, the
-  `r1`-on-guard-page entry fault, the `r3==-1` entry sentinel, the
-  shutdown-teardown Heisenbug, and `REX_UNIMPLEMENTED` throwing.
+  `r1`-on-guard-page entry fault, the **launch-vs-binary** discriminator
+  (cross-check launch against Xenia before flipping `r3` — we did, and reverted a
+  wrong `r3==-1` patch), the shutdown-teardown Heisenbug, and `REX_UNIMPLEMENTED`
+  throwing.
 - Methodology: reproducible post-codegen fixups beat hand-edits; keep upstream
   patches as files; `cdb -g -G -cf` + `sxe eh` is the fastest crash/throw triage.
 
