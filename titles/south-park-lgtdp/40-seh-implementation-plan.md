@@ -23,6 +23,14 @@ Two findings change the plan:
    which ≠ the `RtlCaptureContext` return point. Host setjmp/longjmp can only resume at the
    setjmp site, so it cannot reach the handler. (It would only work if capture==resume, i.e.
    `EXCEPTION_CONTINUE_EXECUTION`, which is not the try/except case the worker hits.)
+   **EMPIRICALLY CONFIRMED FAILED (2026-05-24):** set `setjmp_address=0x825925CC` +
+   `longjmp_address=0x8242EA70`, regen+rebuilt → **regressed** to `0xC0000409` (fail-fast)
+   + a NEW `sub_82266AC8` near-null crash. rexglue's `ppc_setjmp`/`ppc_longjmp` use a
+   **`thread_local`** jmp_buf map and **`std::abort()` on no-match**; the title's
+   RtlCaptureContext (2 direct sites → `ppc_setjmp` in `sub_8243FCF0`/`sub_82446CE0`, which
+   set a **stack-buffer** jmp_buf then call `RtlUnwind` and continue) is **SEH machinery,
+   not a same-thread/same-frame setjmp/longjmp pair** → the worker's `ppc_longjmp` finds no
+   matching live jmp_buf → abort/corruption. Reverted. **Do NOT retry this shortcut.**
 
 **⇒ Required approach = host-SEH `CATCH` runs the guest `__except` (NO external mid-function
 entry).** Re-tracing the chain: the `__try`/`__except` lives in **`sub_82456198`** (the
