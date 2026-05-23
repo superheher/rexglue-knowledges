@@ -18,6 +18,42 @@
 > static tooling/findings below remain accurate as *static* facts; the *conclusions*
 > about bootability are superseded by this correction. See [[90-progress-report]].
 
+### BREAKTHROUGH — canary boot trace decodes the mechanism (2026-05-23)
+
+Captured a **function-execution trace** of canary's boot: run with
+`--trace_function_data=true --trace_function_references=true --trace_function_data_path=<dir>`,
+boot the STFS package, then **close gracefully** (`CloseMainWindow()` — a force-kill
+discards the trace). Output `ftrace.0` (Xenia `FunctionTraceData` format: per-function
+header with `start/end/call_count/thread_use/caller_history[4]` + per-instruction
+execute counts; parser `tools/parse_ftrace.py`). Findings:
+
+- **Only ~339 functions execute** during boot-to-menu (huge reduction from 20,045).
+- **The entry `0x824499A0` is the main thread's only `0xE0000000`-rooted function**
+  (Xenia's thread-start sentinel). The whole boot runs under it.
+- **Canary passes `r3 = -1`** to the entry, NOT `r3=0`: the instruction counts show the
+  `bne` at `0x824499A4` was **not** taken — the `r3==-1` path ran (`li r3,0; bl EC28;
+  …`). (So the long-reverted patch 0002 `r3=-1` matched *canary*; stock master used
+  `r3=0`.) The entry still returns; `r3=-1` runs `EC28` which stores 0 to a KTHREAD
+  field — likely required thread-state setup.
+- **The boot's first phase is the C++ static initializers.** Many boot functions
+  (`0x821001E8`, `0x82100688`, …) have **`.rdata` caller addresses `0x820DAxxx–0x820E4xxx`**
+  — i.e. `_initterm` iterating the `.CRT$XC`/`.CRT$XI` init-pointer array there. Then
+  the deeper boot (`main` → menu loop `0x82109BB0`, 154M calls) runs via a deep
+  **stack-driven** call chain (`bl` callers recorded as stack addrs `0x7018fbXX–fdXX`).
+
+**So the boot mechanism is now known:** kernel starts the main thread at the stub
+entry with `r3=-1`; the entry returns into a **kernel-set continuation = the CRT
+startup (`mainCRTStartup`)**, which runs `__security_init_cookie`, `_initterm` over
+the init array at `~0x820DAxxx`, then `main`. The recomp's stub entry returns to a
+thread-exit instead — it never runs the static initializers or `main`.
+
+**Fix path (now concrete):** (1) launch main thread with `start_context = -1`
+(re-apply patch 0002); (2) make rexglue run the **CRT startup / static-init array**
+— find `mainCRTStartup` among the 339 traced functions (it calls `_initterm` over the
+`0x820DAxxx` array) and start/continue there, or replicate `_initterm(__xi/__xc)` +
+`main` in a launch hook. The 339-function set + the init-array region `0x820DAxxx`
+make both findable now.
+
 ### Corrected diagnosis + concrete next step (the recomp IS close)
 
 What canary's boot proves about the mechanism:
