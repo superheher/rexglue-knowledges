@@ -6,6 +6,45 @@ frame, then a worker thread faults during asset load, the SEH first-cut *recover
 guest's exception path **resume** correctly. Companion to [[35-entry-forensics]];
 general lessons in `general/95`, `general/80`.
 
+## 🔬 EMPIRICAL BREAKTHROUGH (2026-05-24, live instrumentation — supersedes the "standard SEH" framing)
+Instrumented the runtime (`RtlCaptureContext`/`RtlUnwind`) **and** the generated
+`sub_8242EA70`/`sub_82456198`/`sub_824711D0`, rebuilt, ran, read the log. Ground truth:
+
+1. **The exception is LEGITIMATE — it is image-format detection via exceptions.**
+   `sub_824711D0` is a **JPEG** marker parser: it checks the first two bytes for `FF D8` (SOI).
+   The asset it's fed starts with **`00 00 02 00 00 00 00 00`** (a **TGA** header — `00 00 02`
+   = uncompressed true-color; the game's assets are TGA/PNG, not JPEG — see `private/extracted`).
+   So the JPEG parser **correctly** rejects it and calls its `raiseError` virtual
+   (`[[parser+0]+0] = sub_82456198`) to throw → the loader is meant to **catch and try the next
+   format**. This is on the **critical path for every non-JPEG image load** — there is no
+   band-aid; the menu needs working image loads.
+2. **The mechanism is a CUSTOM hand-rolled C++ exception runtime, NOT `.xdata` table SEH.**
+   The parser object is **stack-allocated** (`obj=0x7048E7F0`) with a **stack vtable**
+   (`P=[obj+0]=0x7048E9D0`): `[P+0]=sub_82456198` (raiseError), `[P+8]=sub_82137018` (a **no-op
+   `blr`** cleanup), and an embedded **CONTEXT at `[P+144]`** (`0x7048EA60`) in the exact
+   layout `sub_8242EA70` (RtlRestoreContext) reads. `sub_82456198` = run cleanup (`[P+8]`, no-op)
+   then `RtlRestoreContext([P+144], 1)` to resume at the catch.
+3. **`buf[308]` (the resume PC) is 0 — the CONTEXT is never captured in the recomp.**
+   Logged at the live call: `buf=7048EA60 cont308=00000000 flag312=00000000 r4=1` → it takes the
+   **resume path** (`flag312==0`) and `blr`s to **0**. `RtlCaptureContext` is called **0 times**
+   before the crash; its only 2 guest call sites target a **global** (`sub_8243FCF0`) and the
+   **throw-path stack buffer** (`sub_82446CE0`: capture→`RtlUnwind`, a separate `_CxxThrowException`-
+   like path), **never** the parser object's `+144`. No guest fn captures a full CONTEXT into a
+   passed buffer either. ⇒ whatever sets up the parser object's resume CONTEXT (the "try") is not
+   running / not capturing in the recomp.
+4. **No host-SEH catch can help.** Only **77** functions are `SEH_TRY`-wrapped (the `.xdata`
+   scopes rexglue found); **none** of the loader-chain ancestors (`sub_82458010`, `sub_8246F498`,
+   `sub_8246F270`, `sub_82476FD0`, `sub_824712B0`, `sub_824557A8`, `sub_82459B00`, `sub_82455F80`,
+   `sub_8224D470`) are wrapped. A host `throw` from `sub_82456198` propagates to the **trampoline**
+   (confirmed earlier). So the fix is **not** generate_exception_handlers + RtlUnwind.
+
+**⇒ Revised fix path (custom EH, not Win32 dispatch):** find where the parser object / its stack
+vtable is constructed (the loader's "try" — an ancestor that stores `sub_82456198` at `[P+0]`),
+and ensure the resume CONTEXT at `[P+144]` is **captured there** (PC=the catch / "format failed,
+try next"), then make `sub_8242EA70`'s resume `blr` **call the function at `buf[308]`** instead of
+`return`. The capture is the linchpin (without it `buf[308]=0`). Diagnostics that proved this are
+local edits to the runtime + git-ignored generated files (`[SEH-DIAG]` log lines).
+
 ## ⚠️ CRITICAL UPDATE (after deeper analysis — supersedes "Recommended approach" below)
 Two findings change the plan:
 1. **`RtlCaptureContext` is a no-op STUB** in the runtime (`xboxkrnl_rtl.cpp:558`,
