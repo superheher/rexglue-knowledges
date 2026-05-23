@@ -37,6 +37,22 @@ What canary's boot proves about the mechanism:
 - Content is NOT the blocker: `private/extracted/` has the paths the game uses
   (`media/Assets/Audio`, `UI`, `LuaScripts`, `strings`; 1555 files).
 
+**Mechanism (precise) + what was tried:**
+- In **static recomp**, a guest `blr` becomes a C++ `return`: rexglue
+  (`function_dispatcher.cpp`) sets `lr=0xBCBCBCBC`, calls the recompiled entry as a
+  C++ function, and on its `blr`/return drops back to the runtime → the thread ends
+  ("Execution complete"). The mid-function entry's epilogue restores LR from
+  **`[r1+0x68]`** and returns there — but rexglue never writes a boot continuation to
+  that slot, and even if it did, the recompiled `blr` C++-returns instead of
+  dispatching to it. Canary (interpreter) *follows* `blr` to `[r1+0x68]` and keeps
+  executing — the kernel-set continuation. **That continuation is the missing piece.**
+- **Tested via `REX_ENTRY_OVERRIDE` (verify-by-running):** entry `0x824499A0` →
+  returns ("Execution complete"); entry `0x82449968` (function start, runs the
+  skipped prologue + the `EC98` indirect kernel call via `[0x8260E0F0]+0x20`) →
+  exits silently (the dispatch-table global isn't set up in rexglue). **Neither
+  boots.** So it's not a wrong-entry-address issue; it's the thread-startup
+  continuation/state the kernel provides around the entry.
+
 **Concrete next step:** diff **Xenia *canary*'s** thread-launch / entry handling
 (open source: `github.com/xenia-canary/xenia-canary`, `XThread::Execute` /
 `PrepareThreadStartContext` / stack setup) against master and against rexglue's
