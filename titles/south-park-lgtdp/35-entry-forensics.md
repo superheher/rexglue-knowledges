@@ -58,6 +58,39 @@ still unresolved — `caller_history` is too noisy; needs a cleaner trace (a Xen
 build with proper call-trace, or stepping the entry's return in a debugger) to read
 `[r1+0x68]`. The 339-function set is a useful boot-path reference regardless.
 
+### Source-confirmed defect + fix (the precise reason the recomp early-returns)
+
+Reading the runtimes' source (not inference) pins it:
+
+- **Xenia** `Processor::Execute` sets `ctx->lr = 0xBCBCBCBC` (a sentinel) then runs the
+  entry. A *normal* entry's prologue saves that sentinel LR and its epilogue restores
+  it → `blr` to the sentinel → the JIT returns (Execute ends). **This title's entry is
+  mid-function**, so the prologue is skipped and the epilogue does `lwz r12,-8(r1);
+  mtlr r12; blr` — i.e. it `blr`s to **`[r1+0x68]` (a stack value), not the
+  sentinel** — and Xenia's JIT *continues executing there* (the boot continuation;
+  poison→crash in stock, valid→boot in canary).
+- **rexglue** (static recomp) recompiles `blr` as a plain **`return;`**
+  (`src/codegen/builders/control_flow.cpp` `build_blr`). So the recompiled entry's
+  `blr` returns to the C++ runtime (`FunctionDispatcher::Execute` → thread ends),
+  **discarding `ctx.lr` (= `[r1+0x68]`, the continuation)**. rexglue has **no reenter
+  loop** (Xenia's `XThread::Execute` has one). *This is the exact reason the recomp
+  prints "Execution complete" and stops.*
+
+**Fix (two parts):**
+1. **Reenter loop:** after the entry's recompiled function returns, if `ctx.lr` is a
+   valid registered guest function (≠ sentinel `0xBCBCBCBC`), dispatch to it and
+   repeat — emulating the interpreter's `blr`-follows-LR. (Add to the main-thread
+   launch / `FunctionDispatcher`.)
+2. **Valid `[r1+0x68]` continuation:** the recompiled entry's epilogue loads the
+   continuation from the guest stack at `[r1+0x68]`, which rexglue currently leaves
+   uninitialised. The kernel/canary writes the boot continuation there; rexglue must
+   too. **The continuation address is the one remaining unknown** — being read from
+   canary's thread-startup source (clone in progress) or via a debugger read of
+   `[r1+0x68]`.
+
+Also: launch with **`start_context = -1`** (canary value; the entry takes the `r3==-1`
+EC28 path that stores 0 to a KTHREAD field).
+
 ### Corrected diagnosis + concrete next step (the recomp IS close)
 
 What canary's boot proves about the mechanism:
