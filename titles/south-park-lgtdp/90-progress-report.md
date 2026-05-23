@@ -1,8 +1,19 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
-Honest status of the port. **Not playable, and now assessed research-grade for this
-title**; substantial, verified bring-up progress and a large reusable knowledge
-base. Written/updated after the first focused agent session (2026-05-23).
+Honest status of the port. **Not yet playable, but the boot IS reproducible** (Xenia
+canary boots it to the menu from the same base xex); substantial verified bring-up +
+a large reusable KB. Written/updated 2026-05-23.
+
+> ## ⚠️ CORRECTION — the title boots in Xenia (earlier "research-grade" was wrong)
+> A late-session web/Xenia check overturned the mid-session "doesn't boot in Xenia /
+> research-grade" verdict. **Xenia canary fully boots South Park** from the **proper
+> STFS package** (base `default.xex`, **no patch**): ~14 game threads, content load,
+> audio init, GPU draws — Xenia compat #1156 = **"state-menus"**. My earlier "doesn't
+> boot" runs used the **loose extracted xex** (setup error). So the boot is
+> **achievable**; the recomp's early-return at the entry is a **fixable
+> runtime/content-mount discrepancy**, now diagnosable against the working canary
+> trace — *not* a research-grade wall. The "research-grade" framing below is
+> superseded; treat it as "non-trivial bring-up with a working emulator reference."
 
 > **Headline:** the pipeline works end-to-end (extract → recompile → build → boot
 > the runtime → execute guest code, all verified), but the title **does not boot via

@@ -1,5 +1,23 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
+> ## ⚠️ CORRECTION (2026-05-23, later same day) — the title DOES boot in Xenia
+> The earlier "does not boot in Xenia / research-grade" verdict in this file was
+> **WRONG**, caused by a *setup error*: I tested the **loose extracted `default.xex`**.
+> With the **proper STFS package** (`58410931/000D0000/…`), **Xenia canary fully
+> boots South Park** — base `default.xex`, **no patch/title-update** (`PatchDB:
+> Loaded patches for 0 titles`): Main XThread spawns ~14 game threads, loads content
+> (`\media\Assets\Audio`, `\UI`, `\media\Assets\LuaScripts`, `strings`), inits audio,
+> and **issues GPU draws** (menu). Xenia game-compatibility #1156 = **"state-menus"**
+> (intro + main menu work; gameplay blocked by a save/profile error). So the boot is
+> **reproducible in an emulator from the same base xex the recomp uses** — it is
+> **not** research-grade. The static "stub entry returns immediately" reading below
+> is therefore **incomplete**: entered correctly (kernel-set-up frame + content),
+> `0x824499A0` runs the full game init. The recomp's early-return is a **fixable
+> runtime/setup discrepancy** (likely loose-vs-STFS content mount and/or entry
+> stack-frame setup), now being diagnosed against the working canary trace. The
+> static tooling/findings below remain accurate as *static* facts; the *conclusions*
+> about bootability are superseded by this correction. See [[90-progress-report]].
+
 This is the deep, tool-backed analysis of South Park's executable entry, refining
 [[30-boot-log]]. Everything here was produced **statically** from the decrypted PE
 image (`tools/xex_decrypt.py --save`, then `tools/pe_inspect.py`, `tools/pdata.py`,

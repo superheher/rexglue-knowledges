@@ -34,15 +34,20 @@ reachable much sooner. See the milestone table at the end.
 > pending** a Xenia-canary result (canary is far more compatible) or deeper RE.
 > The extraction/recompile/compile/run-guest-code outcomes below all held.
 >
-> **Update 2 (same day): canary too.** Confirmed in Xenia *canary* as well — it
-> does not crash (it returns from the stub) but the game **still never
-> initializes** (main thread makes zero further calls; 206 unresolved import
-> variables). So **neither Xenia version boots this title** — both run only the
-> entry stub. Re-rate **"boots a first frame" and "playable" -> Low /
-> research-grade.** The favourable import surface is moot; the **entry/boot
-> anomaly** is the real blocker. This makes South Park a poor *playable* candidate
-> but an excellent *KB case-study* candidate; a title that already boots in Xenia
-> would be a far better target for the playable goal.
+> **Update 2 (same day): canary too** — *(partly superseded, see Update 3)*. With a
+> loose extracted xex, canary ran only the stub and didn't init.
+>
+> **Update 3 (same day) — CORRECTION: it DOES boot in Xenia.** The Update-2 setup
+> was wrong (loose extracted xex). With the **proper STFS package**, **Xenia canary
+> fully boots South Park** from the base `default.xex` (**no patch**): ~14 game
+> threads, content load, audio, GPU draws — Xenia compat #1156 = **"state-menus"**
+> (menu works; gameplay blocked by a save/profile error). So the original
+> feasibility verdict (**feasible, medium difficulty**) **stands**, with the boot
+> path *empirically reproducible in an emulator*. The recomp's early-return at the
+> entry is a **fixable runtime/content-mount discrepancy** (diagnose against the
+> working canary trace), **not** research-grade. Stock-Xenia crashing at the stub
+> was a stock-master limitation, not the title's ceiling — **always validate against
+> canary (most compatible), not just stock.**
 
 ---
 

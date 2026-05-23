@@ -88,9 +88,14 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   **epilogue** — `lwz r12,-8(r1); mtlr r12; … blr` returns to a **poison/garbage**
   address (e.g. `0xBEBEBEBE` in Xenia) because the skipped prologue never saved LR.
   A trace showing the crash PC at the entry's `blr` with `r12`/`r31`=poison is the
-  tell. **Stock Xenia reproduces this exact crash** for such a title — a useful
-  reference check: if the *reference emulator* dies at the same instruction, your
-  recomp is correct and the title's launch is genuinely non-standard. (`45`)
+  tell. ⚠️ **But "stock Xenia also crashes here" does NOT mean the title is
+  unbootable** — that's a stock-master limitation. **Always validate against Xenia
+  *canary* (far more compatible) loading the *proper STFS package*, not a loose
+  extracted `default.xex`.** Real case: stock Xenia crashed at the stub `blr`, but
+  **canary booted the same title to its menu from the same base xex** (no patch) once
+  given the STFS package — so the entry, entered with a kernel-set-up frame + real
+  content, runs the full init. Check Xenia's game-compatibility tracker for the title
+  ID before concluding "research-grade." (`45`)
 - **Process crashes on EXIT (nondeterministic AV / `STATUS_HEAP_CORRUPTION`), not
   during play; runs clean under a debugger.** → A **runtime shutdown/teardown**
   bug (e.g. input-listener destructor dereferencing a stale pointer), *not* guest
@@ -117,10 +122,17 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   → Set `discord = false`. (`45`)
 - **Xenia hangs at `EmulatorWindow::Create()` / won't launch a title from the
   command line in an automated (non-interactive) shell.** → It needs an interactive
-  desktop to create its window, and (at least in canary) the CLI title launch
-  (positional / `--target=` / `-- <path>`) may not fire. → Open the title via the
-  **GUI** in a real logged-on session; set `log_file`/`log_level=3`/`log_mask=0`
-  for the trace. (`45`)
+  desktop to create its window. → Launch from a logged-on session (e.g. a
+  `schtasks /it` task); set `log_file`/`log_level`/`log_mask` for the trace.
+  *(Canary's CLI launch DID work via `schtasks /it` once the config was a fresh,
+  uncorrupted one; corrupted config = silent no-launch.)* (`45`)
+- **Title "doesn't boot" in your emulator test — but it should.** → You loaded a
+  **loose extracted `default.xex`** (incomplete content/filesystem mount). → Load the
+  **proper STFS package** (`<titleid>/000D0000/<hash>`) — Xenia mounts its full
+  `StfsContainerDevice` filesystem (`\media\Assets\…`, `\UI`, …). Real case: loose xex
+  only ran the entry stub; the **STFS package booted the same title to its menu**
+  (~14 game threads, GPU draws). Also: **test canary, not just stock**, and check the
+  **game-compatibility tracker** for the title ID before concluding it's hard. (`45`)
 
 ## Numeric correctness
 - **Math drifts / subtle errors near zero.** → **Denormal** handling: FPU keeps,
