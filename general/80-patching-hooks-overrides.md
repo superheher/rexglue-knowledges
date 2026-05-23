@@ -58,6 +58,43 @@ combinations are rejected with warnings — e.g. you can't both `return` and
 - instrument (log a variable at a hot spot);
 - inject host behaviour at an exact point without owning the whole function.
 
+## Overriding the guest entry point (and brute-forcing the real one)
+
+When the XEX entry is a **stub** (doesn't reach `mainCRTStartup` — see `45`/`95`),
+you can make the runtime start the main thread at a different guest address. A
+cheap, reusable mechanism is an **env-var override** read where the loader caches
+the entry (e.g. rexglue `user_module.cpp`, right after
+`GetOptHeader(XEX_HEADER_ENTRY_POINT, &entry_point_)`):
+
+```cpp
+if (const char* ov = std::getenv("REX_ENTRY_OVERRIDE")) {
+  uint32_t v = (uint32_t)std::strtoul(ov, nullptr, 0);
+  if (v) { REXSYS_WARN("Entry OVERRIDDEN {:08X} -> {:08X}", entry_point_, v); entry_point_ = v; }
+}
+```
+
+No per-address rebuild: set `REX_ENTRY_OVERRIDE=0x82xxxxxx` and relaunch. Because
+it's an env var (not a config rewrite or codegen change), it's ideal for a
+**brute-force search** when static analysis can't pin `mainCRTStartup`:
+
+1. Generate a small candidate pool — **zero-reference functions with a real
+   prologue** (`mflr r12`): `mainCRTStartup` is called only by the kernel, so its
+   address appears nowhere (no `bl`, no data pointer). This filter cut ~10k funcs to
+   ~65 on a real title.
+2. Loop: for each candidate set the env var, launch ~8 s, kill, diff the run log vs
+   the **stub baseline** (record line count + last line). The runtime's
+   `[FATAL] Unresolved call from X to Y` and "Execution complete" markers tell you
+   how far each got. The candidate that runs the C++ static-init storm / reaches a
+   frame (log explosion, or a crash *deep* in init rather than an instant return) is
+   `mainCRTStartup`.
+3. Drive the launches from a **logged-on interactive session** (e.g. a
+   `schtasks /it` task) — the runtime needs a desktop to create its D3D12 window.
+
+This turns an intractable static hunt into an empirical one ("verify by running").
+*Caveat:* if the recomp has many **unresolved-call gaps**, even the right entry may
+crash early on the first gap — widen the function-table range / fill gaps (`50`)
+before concluding.
+
 ## Choosing between them
 
 | Need | Use |
