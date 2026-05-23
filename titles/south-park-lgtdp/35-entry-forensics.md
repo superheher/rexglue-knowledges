@@ -28,29 +28,41 @@
 > recomp is `blr`: canary's JIT follows it to `ctx.lr`; rexglue's static `build_blr`
 > emits C++ `return;` (`codegen/builders/control_flow.cpp:94`) with no dispatch.
 >
-> **The airtight contradiction (the real open problem).** The trampoline's epilogue
-> sets `ctx.lr = [r1+0x68] = [stack_base-0x68]` (`0x7018FFB8` on main) and `blr`s
-> there. I checked *every* path that could populate that slot — `XThread::Create` /
-> `AllocateStack` (only TLS is zeroed; guard pages at `stack_base`), `ThreadState`
-> ctor (`r[1]=stack_base`), both `Processor::Execute` overloads — **none writes it**,
-> and guest memory is zeroed on alloc (`memory.cc:699 Zero`). So the static model
-> predicts `[r1+0x68]=0` → `blr 0` → `ResolveFunction(0)` fails → `Execute` returns →
-> thread exits. **Yet canary reliably boots to the menu.** Something at runtime
-> (heap-reuse leftover, or JIT indirect-branch handling of a 0/invalid target) supplies
-> the continuation in a way static source-reading cannot reveal. In **stock** master
-> the same slot is poison (`0xBE…`) → the documented `blr 0xBEBEBEBE` crash; canary
-> differs only by not poisoning.
+> **✅✅ RESOLVED by an instrumented canary build (2026-05-23).** I built canary from
+> the clone with three probes (dump the entry stack frame in `XThread::Execute`; log
+> `Execute()` enter/return; log the first `Processor::ResolveFunction` calls) and ran
+> the STFS package. It **boots to the menu** (19 threads, 7 shaders, D3D12 draws). The
+> probes settle everything:
+> - **`[stack_base-0x48] = 0`** (the whole `-0x60..-0x30` region is zero). So the
+>   continuation is genuinely **not** a stack value — the earlier "contradiction" was
+>   real, not a measurement error.
+> - **`Execute(824499A0)` on the main thread NEVER returns** — there is no matching
+>   `EXTRACE RET` for it, while every other `Execute` (worker threads `82450FD0`,
+>   callbacks `821C7170`/`82311EE8`) returns normally. **The entire game boot runs
+>   inside one `function->Call` — the JIT follows guest control flow (every `bl`/`blr`)
+>   without unwinding to the host.**
+> - Main-thread boot order (RFTRACE): `824499A0 → 8242BE98 → 82450580 → 824504A8 →
+>   825928AC → 8244B380 → …` (matches the `ftrace.0` set; `82450580` = the outermost
+>   boot fn).
 >
-> **Recomp defect & fix.** `build_blr=return` discards the `[r1+0x68]` continuation.
-> The fix needs (a) the **actual continuation value** and (b) a dispatch (write it onto
-> the main-thread stack + reenter loop, or special-case the trampoline). (a) is the
-> blocker and is **only obtainable live**.
+> **The mechanism is `setjmp`/`longjmp`.** Xenia's `enable_host_guest_stack_synchronization`
+> is **`true` by default**; its cvar help reads *"Records guest/host stack mappings at
+> function starts and checks for reentry at return sites … fixes crashes in games that
+> use **setjmp/longjmp**."* The indirect-branch resolver (`x64_emitter.cc:471
+> ResolveFunction`) detects a jump to a **return site** inside an already-translated
+> function and resumes at the matching host machine code, re-syncing host/guest stacks
+> — i.e. it emulates `longjmp` jumping back into a function body. South Park's CRT boot
+> uses this. In **stock** master the trampoline's slot is poison → the documented
+> `blr 0xBEBEBEBE` crash; canary boots because this feature carries the control flow.
 >
-> **NEXT (the chosen "build canary with tracing" path):** instrument the clone with a
-> ~2-line log — print `ctx.lr` at the trampoline `blr` (`0x824499CC`), or log the first
-> few `Processor::ResolveFunction` calls on the main thread — build canary, run the
-> STFS package, read the continuation address from the log. That single value unblocks
-> the recomp boot.
+> **⇒ Recomp fix (now tractable, not a mystery value).** There is no magic stack value
+> to write. The recomp early-returns because (a) `build_blr` = C++ `return` doesn't
+> follow control flow across the `blr`, and (b) rexglue's **setjmp/longjmp** handling
+> isn't wired to South Park's CRT `setjmp`/`longjmp`. rexglue *supports* setjmp/longjmp
+> via its config (the project's rexglue path lists "save/restore regs; longjmp/setjmp").
+> **Next: identify the guest `setjmp`/`longjmp` functions and configure them in the
+> rexglue `*_config.toml`, plus the reenter/dispatch so boot proceeds past the entry.**
+> See [[36-setjmp-longjmp-boot]] for the config work.
 
 > ## ⚠️ CORRECTION (2026-05-23, later same day) — the title DOES boot in Xenia
 > The earlier "does not boot in Xenia / research-grade" verdict in this file was
@@ -147,15 +159,15 @@ EC28 path that stores 0 to a KTHREAD field).
 to rexglue's `FunctionDispatcher::Execute` — both do `ctx.r1 -= 64+112`,
 `ctx.lr = 0xBCBCBCBC`, call, restore. So the launch is the same; the **only**
 difference is `blr`: canary's JIT continues at `ctx.lr`, rexglue's static `build_blr`
-returns. The entry's epilogue sets `ctx.lr = [r1+0x68] = [stack_base-0x68]`
+returns. The entry's epilogue sets `ctx.lr = [r1+0x68] = [stack_base-0x48]`
 (`0x7018FFB8` for the main thread). In **stock** Xenia that stack slot is poison
 (`Fill 0xBE`) → `blr 0xBEBEBEBE` crash (matches the stock crash dump exactly). In
 **canary** it is *not* poisoned (canary zeroes only TLS, not the stack) and the boot
-proceeds — so `[stack_base-0x68]` holds a **valid continuation**, but canary's source
+proceeds — so `[stack_base-0x48]` holds a **valid continuation**, but canary's source
 neither poisons nor explicitly writes it (`ThreadState` sets `r1=stack_base`;
 `Execute` only pads r1). `KeSetCurrentStackPointers`/`Reenter` is **not** used by
 South Park (a Forza-path; absent from the boot log).
-**The last unknown is the value at `[stack_base-0x68]` and how canary reliably has
+**The last unknown is the value at `[stack_base-0x48]` and how canary reliably has
 it** — resolving it needs reading canary's *live* main-thread stack at the entry
 (debugger / instrumented canary build), which is the next deep step. Once known: set
 that continuation on the recomp's main-thread stack + add a reenter loop (dispatch to
