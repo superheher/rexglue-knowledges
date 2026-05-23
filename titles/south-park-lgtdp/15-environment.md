@@ -38,9 +38,27 @@ host C runtime/SDK that `clang-cl` targets. Its LLVM component shipped only
 Everything is user-scoped and reversible: `scoop uninstall llvm pwsh 7zip`, or
 remove `~\scoop` and the two user-PATH entries.
 
-## Next (rest of Phase 0 → Phase 1)
+## rexglue-sdk build (Phase 0 complete)
 
-- `git submodule update --init --recursive` to pull rexglue-sdk's nested deps
-  (FFmpeg, SDL3, Vulkan-Headers, glslang, spirv-tools, dxc-bin, …).
-- Build/install rexglue-sdk (`cmake --preset win-amd64` → `--target install`).
-- Then Phase 1: extract `default.xex` + assets (see `10-dump-analysis.md`).
+- Submodules pulled recursively; rexglue-sdk's nested deps (FFmpeg, SDL3,
+  Vulkan-Headers, glslang, spirv-tools, dxc, …) are present.
+- Configured + built + installed: `cmake --preset win-amd64` then
+  `cmake --build --preset win-amd64-release --target install` (exit 0).
+  Configure summary: **Graphics D3D12=ON, Vulkan=OFF**, Tracy=ON, C++23, Clang
+  22.1.6, AVX2 (`-march=x86-64-v3`).
+- Install prefix: `third_party/rexglue-sdk/out/install/win-amd64/`
+  (`bin/rexglue.exe` 3.25 MB, `bin/rexruntime.dll` 11.6 MB, `lib/`, `include/`,
+  `lib/cmake/rexglue/`, `share/rexglue/` scaffold sources).
+- **`rexglue --version` → `0.8.1.4-dev.ge8ce24f`**; `rexglue --help` lists
+  subcommands `init`, `codegen`, `recompile-tests`. **Phase 0 acceptance met.**
+
+> Build-env gotcha (recorded for reuse): the agent's shell sessions were spawned
+> *before* scoop edited the user PATH, so `clang`/`pwsh`/`rexglue` were invisible.
+> Fix per command: `$env:Path = [Environment]::GetEnvironmentVariable('Path',
+> 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')`.
+
+## Next → Phase 2
+
+- `rexglue init` the project scaffold; configure `*_config.toml`
+  (`file_path` → `private/default.xex`); build the `*_codegen` target; compile
+  the app. See `10-dump-analysis.md` for base/entry/imports.

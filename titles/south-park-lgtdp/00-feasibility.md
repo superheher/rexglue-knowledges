@@ -63,7 +63,7 @@ reachable much sooner. See the milestone table at the end.
 
 | # | Risk | Severity | Mitigation |
 |---|------|----------|------------|
-| R1 | **Clang toolchain absent on host.** rexglue & recomp output require Clang 18–20+; only MSVC-less CMake/Ninja are present today. | Blocker (easy) | Install LLVM/Clang 20+ (or VS2022 "C++ Clang tools"). Phase 0. |
+| R1 | ~~**Clang toolchain absent on host.**~~ | ~~Blocker~~ **CLOSED** | Clang/LLVM **22.1.6** installed (scoop, user-scope); rexglue-sdk built+installed clean. See [[15-environment]]. |
 | R2 | **rexglue-sdk is "early development."** Public API churn, rough edges. | Medium | Pin a submodule commit; keep XenonRecomp/XenosRecomp as a cross-check/fallback path. |
 | R3 | **Jump-table & function-boundary detection is compiler-version-sensitive.** XenonAnalyse is tuned to Unleashed's XDK; a 2009 XBLA XDK build may differ. | Medium | Iterate the analyzer; supply manual `functions`/`switch_table` entries in TOML; use rexglue's vtable/sig scanners. |
 | R4 | **C++/SEH exceptions are not translated** by XenonRecomp (rexglue codegen is similar). If the title relies on EH for control flow, gaps appear. | Medium | Skip EH data as `invalid_instructions`; most XDK titles don't use EH for normal flow. Confirm during boot bring-up. |
@@ -71,10 +71,20 @@ reachable much sooner. See the milestone table at the end.
 | R6 | **Custom Doublesix engine** with little public RE. Game-specific systems (save, timing, asset I/O) need first-party reversing for hooks. | Medium | Mid-asm hooks + function overrides (both toolchains support this); reverse only what blocks progress. |
 | R7 | **XMA audio / any Bink-style video** cutscenes. | Low-Med | rexglue ships XMA decode + FFmpeg; wire to SDL audio. |
 | R8 | **Online co-op** (matchmaking/session). | High | **Out of scope for v1.** Stub `xam`/session APIs to "offline"; keep local play. |
-| R9 | **Title update / DLC** (two small marketplace packages in the dump). | Low | Identify whether a TU (`.xexp`) exists; if so, feed it to the recompiler's patch path. See [[10-dump-analysis]]. |
+| R9 | ~~**Title update / DLC**~~ | ~~Low~~ **CLOSED** | The two `00000002` packages are 46-byte DLC markers (`ProfChaos.bin`, `ChallengeLevels.bin`) — **no `.xexp` TU**. Single un-patched `default.xex`. See [[10-dump-analysis]]. |
 
 None of R1–R7 are novel — each has an established play in prior recomp projects.
 R8 is the only genuinely hard item and it is *separable* from the playable core.
+
+**Post-recon update (2026-05-23, Phase 1 done).** R1 and R9 are **closed**
+(toolchain in; no TU). Two findings re-rate the rest: (a) the dump carries
+**177 WMV videos / ~652 MiB** — bumps **R7** from "Low-Med" toward **Medium**,
+since full parity needs WMV/VC-1 decode (FFmpeg, which rexglue bundles), though
+video is *skippable* for the boot→match→win/lose core; (b) game logic uses an
+embedded **Lua VM** (39 `.lua` scripts) — this *eases* **R6**, because Lua runs
+as recompiled guest code (no engine re-impl), but means save/progression state
+may flow through Lua. Import surface confirmed small (≈487 slots across
+`xboxkrnl`+`xam`). Net: verdict unchanged — **feasible, medium difficulty**.
 
 ---
 

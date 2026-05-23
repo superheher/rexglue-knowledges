@@ -23,10 +23,14 @@ The dump follows the Xbox 360 on-storage content layout
 
 Every file begins with the ASCII magic **`LIVE`** (`4C 49 56 45`) → they are
 **LIVE-signed STFS** (Secure Transacted File System) packages. The big
-`000D0000` file is the **main game package** (contains `default.xex` + assets);
-the two `00000002` files are small **Marketplace Content** packages (candidate
-title update / DLC / avatar award — to be classified during extraction; see R9
-in [[00-feasibility]]).
+`000D0000` file is the **main game package** (contains `default.xex` + assets).
+
+The two `00000002` packages were extracted and classified (Phase 1): each holds
+**one 46-byte `.bin`** — `ProfChaos.bin` and `ChallengeLevels.bin`. These are
+**DLC entitlement markers** (the "Professor Chaos" and "Challenge Levels"
+add-ons), *not* a Title Update — **no `.xexp`** is present. So the recompiler
+ingests a single, un-patched `default.xex` (R9 closed; the two markers are
+ignorable for an offline v1).
 
 ## Main package internals (read-only scan)
 
@@ -83,11 +87,80 @@ Goal: produce `private/default.xex` (git-ignored) plus any title-update `.xexp`.
    effort estimate in [[00-feasibility]] can be tightened from
    "library-level" to "ordinal-level".
 
-## Open questions to resolve during extraction
+## XEX recon results
 
-- Exact XEX compression/encryption flags (affects nothing functionally — the
-  tools handle it — but good to record).
-- Whether a title update exists and changes code (jump tables/boundaries).
-- Distinct imported ordinal count (drives the kernel/XAM shim backlog).
-- Engine markers inside the (decompressed) image: any third-party middleware,
-  scripting VM, or audio/video middleware that needs its own handling.
+Extracted `private/default.xex` (8,499,200 B, magic `XEX2`) and parsed its
+plaintext headers with `south-park-recomp/tools/xex_recon.py`. The XEX *headers*
+(security info, optional headers, import libraries) are unencrypted; only the
+inner PE is compressed/encrypted, so these read without the AES key.
+
+| Field | Value |
+|---|---|
+| Module flags | `0x00000001` (**TITLE**) |
+| Image base | **`0x82000000`** |
+| Entry point | **`0x824499A0`** |
+| Image size (decompressed) | `0x930000` = **9,633,792 B** |
+| PE data offset | `0x3000` · security info `0x90` · 15 optional headers |
+| **Compression** | **`basic`** (block list — *not* LZX "normal") |
+| **Encryption** | **`normal` (AES-128-CBC, retail)** |
+| Default stack | `0x40000` (256 KiB) |
+| TLS / EXECUTION_INFO / GAME_RATINGS / RESOURCE_INFO / STATIC_LIBRARIES / ORIGINAL_PE_NAME / LAN_KEY / XBOX360_LOGO | present |
+
+**Import surface (the shim backlog, ordinal-level).** Two libraries; per-library
+import-record counts read straight from the import-libraries header:
+
+| Library | Import records | Version / min |
+|---|---|---|
+| `xboxkrnl.exe` | **325** | `0x20247000` / `0x20074500` |
+| `xam.xex` | **162** | `0x20247000` / `0x20074500` |
+
+≈ **487 import slots** total. That is the *upper bound* on distinct kernel/XAM
+functions to provide; most already exist in the rexglue runtime, and a large part
+of `xam`'s 162 are stubbable for an offline title. The exact resolved ordinal
+*numbers* live in the (de)compressed PE and will be enumerated by `rexglue
+codegen` in Phase 2; this count tightens the estimate from "library-level" to
+"~hundreds of slots, mostly pre-implemented".
+
+> `basic` compression + AES-128 is the easy ingest case — both rexglue and
+> XenonRecomp decrypt (tiny-AES) and reassemble basic blocks natively. No `.pdata`
+> / section detail is recorded here yet because it requires decompressing the PE;
+> deferred to the recompiler's analysis pass (Phase 2).
+
+## Asset inventory & engine fingerprint
+
+Full read-only extraction of the main package → `private/extracted/` (git-ignored)
+via `tools/stfs_extract.py`: **1,555 files / 46 dirs, 915,071,969 B (872.7 MiB)**.
+Top-level: `media/`, `ui/`, plus root achievement/arcade PNGs, `ArcadeInfo.xml`,
+`default.xex`. By type (count / size), the subsystem map the runtime must cover:
+
+| Ext | Count | Size | What it implies for the runtime |
+|---|---:|---:|---|
+| `.wmv` | 177 | **651.7 MiB** | **WMV/VC-1 video** (cutscenes/intros) → FFmpeg decode + present. The single biggest payload; skippable for the core loop, real work for parity. |
+| `.xwb` | 18 | 111.7 MiB | XACT **wave banks** → **XMA** decode (per-character voice banks + `StreamWaveBank` 50 MiB music). |
+| `.bin` | 45 | 40.9 MiB | Level / challenge / generic binary data (engine-specific). |
+| `.png` | 674 | 31.6 MiB | UI & textures as **PNG** → runtime PNG decode (not native Xbox `.dds`). |
+| `.xzp` | 1 | 22.5 MiB | Packed archive ("XZP") — a custom container to crack or stream. |
+| `.ttf` | 5 | 4.8 MiB | **TrueType** fonts (EN + JP `*-ja-jp.ttf`) → runtime glyph rasterization. |
+| `.xsb`/`.xgs` | 3 / 1 | 0.4 MiB | XACT **sound banks** + global settings (cue/transition graph). |
+| `.xmc` | 526 | 0.25 MiB | Many tiny engine containers (`movenfiredata`, `decals`, `audiobanks`, …). |
+| `.lua` | 39 | 0.16 MiB | **Lua scripting** — game logic runs on an embedded Lua VM (compiled into guest code, so it recompiles "for free"). |
+| `.ptc` | 1 | 0.09 MiB | Custom texture/package (`ArcadeLogo.ptc`). |
+| `.updb`/`.xbv`/`.xbp` | 19 each | tiny | Per-level packaged triplets (build/version/package data). |
+| `.dds` | 3 | small | A few native DDS textures. |
+| `.par`/`.spm`/`.xml` | 1 / 2 / 1 | small | Misc engine data; `ArcadeInfo.xml` = XBLA arcade metadata. |
+
+**Fingerprint summary** (Doublesix custom engine): XACT audio (XMA), **WMV
+video**, PNG/TTF loaded at runtime, **Lua** for logic, custom `.xzp`/`.xmc`/`.ptc`
+packaging. Audio + video are the heavyweight runtime subsystems; rendering is
+modest (2.5D tower defense, mostly sprites/UI). No middleware that mandates a
+separate import library (XACT/D3D/XMA are static XDK libs → guest code).
+
+## Resolved vs. open
+
+- **Resolved:** compression (`basic`) + encryption (AES-128); base/entry/image
+  size; import libraries + counts; **no Title Update**; engine middleware map.
+- **Open (deferred to recompiler analysis / later phases):** exact `.pdata`
+  function count & section table (needs PE decompress, Phase 2); distinct ordinal
+  *list* (Phase 2 `codegen`); `.xzp`/`.xmc`/`.ptc`/`.bin` internal formats (only
+  if the loader needs them cracked vs. passed through the VFS); WMV codec exact
+  profile (Phase 5 video).
