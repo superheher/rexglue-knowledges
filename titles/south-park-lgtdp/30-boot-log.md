@@ -265,12 +265,23 @@ launch patch took effect); r4=0. The earlier "cdb bp didn't bind" was a symbol
 artifact — the entry *did* run. So the entry-is-a-stub diagnosis is now
 **dynamically verified**, not just static.
 
-Static search for `_initterm`/`mainCRTStartup` (`tools/find_initterm.py`) returns
-too many small indirect-call-loop candidates to pin uniquely among 20,046
-functions. **The remaining unknown is genuinely "how does this title start on real
-hardware"** — which needs a real-HW/Xenia PC trace of the boot to see what the
-kernel actually runs (the recompiled code is correct; the launch model isn't
-reproduced). That dynamic trace is the single missing input.
+Static search for `_initterm`/`mainCRTStartup` (`tools/find_initterm.py`,
+`tools/find_maincrt.py`) cannot pin it: of 20,046 functions, **11,656 are "roots"**
+(no static caller) because the engine is heavily C++/virtual — `main` and most
+logic are reached via **indirect/vtable calls** that a static call graph can't
+follow. The CRT-signature filter (root + `__savegprlr_*` + moderate frame + ≥4
+`bl`) still returns ~20 *game* functions (e.g. one with 85 `bl`s). The runtime
+itself does **not** run C++ static init (verified: it relies on the guest entry's
+`mainCRTStartup` to do it) — so the stub entry is exactly why nothing initializes.
+
+**Definitive conclusion:** the recompiled code is correct and complete; the blocker
+is purely the *launch model* — South Park's XEX entry is a stub, its real
+`mainCRTStartup` is reachable only through indirect calls, and locating it (or
+seeing the true boot path) provably requires **dynamic analysis (a Xenia/real-HW
+PC trace of the boot)** or **a decompiler with indirect-aware xrefs (Ghidra/IDA)**.
+Neither is available headlessly on this host. This is the single missing input;
+everything up to it (extract → recompile → build → boot runtime → execute guest
+code) is done and verified.
 2. Does the title rely on **TLS callbacks / C++ static initializers** that the
    runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
