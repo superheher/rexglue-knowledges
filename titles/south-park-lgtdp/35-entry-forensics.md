@@ -25,6 +25,20 @@
 > `--target`). **If `.text` is also affected, the codegen must be regenerated from the
 > correct `default.xex`.** This is the active blocker. (Earlier memory already flagged
 > "recomp uses LOOSE content … suspect" — now confirmed.)
+>
+> **✅ FIXED + VERIFIED (2026-05-23).** Root cause was a bug in **my own**
+> `tools/stfs_extract.py`: the STFS block-to-offset math used `b + f*(b//0xAA + …)`,
+> dropping the per-level hash-table `+1` that Xenia's `BlockToOffsetSTFS` applies once
+> `b ≥ 0xAA`. So from STFS block 0xAA on, extraction drifted **one block** → later
+> sections (`.data`, large assets) corrupt; `.text` before the drift survived (why
+> `xstart` matched). Fixed to the iterative `block += ((b+base)/base)*f` form. Re-extracted
+> `default.xex` now decrypts to `.data` **byte-identical to canary**
+> (`[0x8260E0F0]=0x8260E0C0`, `[..E0]=0x8259271C`, …). Dropped it into the recomp →
+> it **gets past `[0x8260E0F0]`** (no more singleton crash). **New, further blocker:**
+> `[FATAL] Call to invalid or unregistered function at guest address 0x8259287C` — that
+> function lived in the corrupt `.text` region so the codegen never analyzed it ⇒
+> **regenerating the codegen from the corrected `default.xex`** (in progress), then
+> rebuild; assets must also be re-extracted with the fixed tool. Real boot progress.
 
 > ## ✅ BOOT CONTINUATION FIXED + VERIFIED IN THE RECOMP (2026-05-23)
 > Two SDK patches make the recomp carry control past the entry trampoline into the
