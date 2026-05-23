@@ -149,6 +149,17 @@ Both #1 and #2 are required together (without #1, `buf[308]` is garbage → bad 
 Each iteration: SDK build (RtlCaptureContext) + the sub_8242EA70 change + regen/fix + app
 build. Keep the committed stable baseline (renders) to revert to.
 
+**TESTED 2026-05-24 (pieces 1+2) → `RtlUnwind` is the missing critical piece.** With #1 done
+and #2 (the funclet call) hand-edited in, the boot **FATALs `Call to … function at guest
+address 0x00000000`** — i.e. **`buf[308]` is 0**. The game's recompiled CRT relies on
+**`RtlUnwind`** to walk the `.xdata` scopes, run `__finally`s, and **write `buf[308]` = the
+`__except` target** before `RtlRestoreContext` jumps there; our `RtlUnwind` is a first-cut
+that just *throws*, so `buf[308]` is never set → 0. ⇒ the real ordering is **(2) implement
+`RtlUnwind` = the core Win32 unwind** (walk `.pdata`/`.xdata` for the faulting PC, find the
+handling scope via its filter, run intervening `__finally`s, set the target context incl.
+`buf[308]`), *then* (3) `RtlRestoreContext`→call-funclet (piece "#2" above), then (4) the
+continuation. `RtlUnwind` is the days+ gate. Pieces 1+2-without-RtlUnwind reverted to stable.
+
 The sections below are the reasoning trail (the setjmp/longjmp "approach B" is historical).
 
 ## What the title actually uses (observed)
