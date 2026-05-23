@@ -58,6 +58,17 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Crash entering a routine that unwinds.** → `longjmp`/`setjmp` not redirected,
   or **EH data** parsed as code. → Set their addresses; add `invalid_instructions`
   skips. (`50`)
+- **Nonvolatile register / stack pointer corrupted across a call** (caller's `rNN`
+  or `r1` is garbage after a callee returns; manifests as a null/`base+0` write or a
+  read near 0 *deep in the boot, ~tens of seconds in*). → The **callee was emitted
+  without an epilogue**: in the binary it ends with `bl <helper>` then padding
+  (`0x00000000`), with no `addi r1`/`ld rNN`/`blr`. On hardware the helper does the
+  tail-cleanup or never returns (a `longjmp`/`noreturn`); the recompiler translated the
+  `bl` as a plain call + a void return, so `r1`/nonvolatiles are never restored and the
+  guest stack pointer drifts toward 0. → It's the **setjmp/longjmp / C++-EH** path:
+  configure `setjmp`/`longjmp` addresses so those calls are handled as control transfers,
+  not plain calls. Bisect with a `REXLOG_WARN` of the suspect register before/after each
+  indirect call to find the offending callee. (`50`, `80`)
 - **Works in Debug, breaks with optimizations.** → An `*_as_local`/`skip_lr`
   assumption (clean ABI / no exceptions) is violated. → Disable the offending
   optimization; only enable opts after a stable boot. (`50`)

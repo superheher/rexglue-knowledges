@@ -47,10 +47,20 @@
 > deep under `XThread::Execute`: `sub_82450FD0 → sub_82250420 → sub_8211B740 →
 > sub_8211BD60 → sub_8224D470 → sub_82455F80 → sub_824557A8 → sub_82459B00 → sub_82458010
 > → sub_8246F498 → sub_8246F270 → sub_82476FD0 → sub_824712B0 → sub_824711D0`. `sub_824711D0`
-> walks `r31=[r3+24]` and its fields — next: `REXLOG_WARN` the null field in `sub_824711D0`
-> + callers to find which object/field is unset and why. Then the render/update loop +
-> Phases 4-6. Reproduce: re-extract → `rexglue -f codegen` → `tools/fix_recomp_labels.py`
-> → build → run `out/build/.../south_park_td.exe --game_data_root=<repo>\private\extracted`.
+> walks `r31=[r3+24]` and its fields. **ROOT (REXLOG_WARN bisect + a test fix):** `r31` is
+> corrupted by an indirect call to `sub_82456198`, which in the binary ends with `bl
+> 0x8242EA70` and **NO epilogue** (0x824561CC is `0x00000000` padding) — it saves the
+> caller's `r31` but never restores it, so the recomp's void return leaves `r31` garbage.
+> Hand-adding the epilogue moved the fault to a **READ of `[r1+80]` with `r1≈1`** — the
+> **guest stack pointer `r1` is ALSO corrupted** (by `sub_8242EA70`). So the real blocker is
+> **SYSTEMIC stack/register corruption from a CLASS of functions emitted without epilogues**
+> (last insn `bl <helper>` + padding; the recomp's void `}` never restores `r1`/
+> nonvolatiles). Most likely the game's **setjmp/longjmp / C++-EH** (init.h includes
+> `<csetjmp>`; same theme as the earlier null EH hook `[0x82902438]`): rexglue has
+> `setJmpAddress`/`longJmpAddress` config (`config.h`) that was **never set**. **Next:**
+> identify the guest setjmp/longjmp functions, set them in the config, regen; then revisit
+> the EH-hook fix in that light. Reproduce: re-extract → `rexglue -f codegen` →
+> `tools/fix_recomp_labels.py` → build → run `…/south_park_td.exe --game_data_root=…`.
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
