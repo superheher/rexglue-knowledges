@@ -31,7 +31,7 @@ reachable much sooner. See the milestone table at the end.
    These two libraries are exactly what the rexglue / Unleashed runtimes
    implement. There is **no `xnet`/`xonline`/`xbdm` import library** present —
    the most expensive surface to emulate (networking, debug) is small or absent.
-   See [[20-dump-analysis]] for the raw findings.
+   See [[10-dump-analysis]] for the raw findings.
 
 2. **No networking dependency at the binary level.** XBLA co-op was online, but
    without `xnet` in the import table the networked code path is narrow. The
@@ -52,7 +52,7 @@ reachable much sooner. See the milestone table at the end.
    **its own Xenos shader translation**, **XMA audio** (FFmpeg/xenia fork) +
    SDL audio, SDL input, a virtual filesystem, kernel/XAM objects, a project
    **scaffolder** (`rexglue init`), and a **PSReX** PowerShell lifecycle that
-   fits this Windows host. See [[10-toolchain]].
+   fits this Windows host. See [[30-toolchains]].
 
 6. **Standard, well-understood container.** The dump is a LIVE-signed STFS
    package with `default.xex` present (XEX2). Extraction is a solved problem.
@@ -71,7 +71,7 @@ reachable much sooner. See the milestone table at the end.
 | R6 | **Custom Doublesix engine** with little public RE. Game-specific systems (save, timing, asset I/O) need first-party reversing for hooks. | Medium | Mid-asm hooks + function overrides (both toolchains support this); reverse only what blocks progress. |
 | R7 | **XMA audio / any Bink-style video** cutscenes. | Low-Med | rexglue ships XMA decode + FFmpeg; wire to SDL audio. |
 | R8 | **Online co-op** (matchmaking/session). | High | **Out of scope for v1.** Stub `xam`/session APIs to "offline"; keep local play. |
-| R9 | **Title update / DLC** (two small marketplace packages in the dump). | Low | Identify whether a TU (`.xexp`) exists; if so, feed it to the recompiler's patch path. See [[20-dump-analysis]]. |
+| R9 | **Title update / DLC** (two small marketplace packages in the dump). | Low | Identify whether a TU (`.xexp`) exists; if so, feed it to the recompiler's patch path. See [[10-dump-analysis]]. |
 
 None of R1–R7 are novel — each has an established play in prior recomp projects.
 R8 is the only genuinely hard item and it is *separable* from the playable core.
@@ -112,5 +112,5 @@ game is one of the friendlier things you can point this toolchain at, the core
 risk (netcode) is optional, and the main cost is iterative bring-up — not a
 research gamble.* Proceed.
 
-See [[10-toolchain]] for the toolchain decision and [[20-dump-analysis]] for the
+See [[30-toolchains]] for the toolchain decision and [[10-dump-analysis]] for the
 measurements behind this verdict.

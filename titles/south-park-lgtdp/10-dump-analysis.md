@@ -26,7 +26,7 @@ Every file begins with the ASCII magic **`LIVE`** (`4C 49 56 45`) → they are
 `000D0000` file is the **main game package** (contains `default.xex` + assets);
 the two `00000002` files are small **Marketplace Content** packages (candidate
 title update / DLC / avatar award — to be classified during extraction; see R9
-in [[00-feasibility-analysis]]).
+in [[00-feasibility]]).
 
 ## Main package internals (read-only scan)
 
@@ -80,7 +80,7 @@ Goal: produce `private/default.xex` (git-ignored) plus any title-update `.xexp`.
      (function boundaries), and the **resolved import ordinal list** — the
      concrete count of distinct kernel/xam calls = the real shim workload.
 4. Record the recon output here (append a "XEX recon results" section) so the
-   effort estimate in [[00-feasibility-analysis]] can be tightened from
+   effort estimate in [[00-feasibility]] can be tightened from
    "library-level" to "ordinal-level".
 
 ## Open questions to resolve during extraction
