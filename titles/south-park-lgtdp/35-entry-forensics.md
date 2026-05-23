@@ -91,6 +91,24 @@ Reading the runtimes' source (not inference) pins it:
 Also: launch with **`start_context = -1`** (canary value; the entry takes the `r3==-1`
 EC28 path that stores 0 to a KTHREAD field).
 
+**Source-confirmed (canary clone):** canary's `Processor::Execute` is *byte-identical*
+to rexglue's `FunctionDispatcher::Execute` — both do `ctx.r1 -= 64+112`,
+`ctx.lr = 0xBCBCBCBC`, call, restore. So the launch is the same; the **only**
+difference is `blr`: canary's JIT continues at `ctx.lr`, rexglue's static `build_blr`
+returns. The entry's epilogue sets `ctx.lr = [r1+0x68] = [stack_base-0x68]`
+(`0x7018FFB8` for the main thread). In **stock** Xenia that stack slot is poison
+(`Fill 0xBE`) → `blr 0xBEBEBEBE` crash (matches the stock crash dump exactly). In
+**canary** it is *not* poisoned (canary zeroes only TLS, not the stack) and the boot
+proceeds — so `[stack_base-0x68]` holds a **valid continuation**, but canary's source
+neither poisons nor explicitly writes it (`ThreadState` sets `r1=stack_base`;
+`Execute` only pads r1). `KeSetCurrentStackPointers`/`Reenter` is **not** used by
+South Park (a Forza-path; absent from the boot log).
+**The last unknown is the value at `[stack_base-0x68]` and how canary reliably has
+it** — resolving it needs reading canary's *live* main-thread stack at the entry
+(debugger / instrumented canary build), which is the next deep step. Once known: set
+that continuation on the recomp's main-thread stack + add a reenter loop (dispatch to
+`ctx.lr` after the entry) + `start_context=-1`.
+
 ### Corrected diagnosis + concrete next step (the recomp IS close)
 
 What canary's boot proves about the mechanism:
