@@ -127,11 +127,13 @@ context switch**, not stack propagation. `RtlRestoreContext`'s tail `blr` jumps 
 emits as `return`.
 
 **The fix is a runtime context-switch, 3 pieces (no host-SEH wrapping needed for this path):**
-1. **`RtlCaptureContext` (`xboxkrnl_rtl.cpp:558`, currently a STUB) must FILL the buffer**
-   so `buf[308]`/regs are valid. Get the caller ctx via `XThread::GetCurrentThread()->
-   thread_state()->context()`; write to `TranslateVirtual(r3)` the layout `sub_8242EA70`
-   reads (big-endian): f14–f31@`+0..136`, SP(r1)@`+144`, r13–r31@`+152..296`, CR@`+304`,
-   PC@`+308`=`ctx.lr`, VMX@`+320..`.
+1. **`RtlCaptureContext` must FILL the buffer** so `buf[308]`/regs are valid (layout,
+   big-endian): f14–f31@`+0..136`, SP(r1)@`+144`, r13–r31@`+152..296`, packed CR@`+304`,
+   PC@`+308`=`ctx.lr`, VMX@`+320..`. **✅ IMPLEMENTED + verified-safe 2026-05-24**
+   (`xboxkrnl_rtl.cpp` `RtlCaptureContext_entry`; was a no-op stub) — fills via
+   `XThread::GetCurrentThread()->thread_state()->context()` + `TranslateVirtual` + `byte_swap`;
+   GPRs/FPRs/SP/CR/PC filled, VMX deferred. Compiles, no rendering regression. This alone
+   does NOT unblock (RtlUnwind still throws via the first-cut, so the dispatch never runs).
 2. **`RtlRestoreContext` (`sub_8242EA70`) must CALL the funclet, not return.** Its resume
    path already reloads ctx from buf (incl. `ctx.lr=[buf+308]`, `ctx.r1=[buf+144]`); change
    the final `blr` (emitted as `return`) to **`REX_CALL_INDIRECT_FUNC(ctx.lr); return;`** so
