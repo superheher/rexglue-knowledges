@@ -99,9 +99,21 @@ Also note: even with that, the exception must **propagate** — `sub_8242EA70`
 CATCH; it must **throw** (`seh_raise_guest_unwind`, e.g. a codegen special-case on its body)
 for the dispatch to fire, AND the throw must land on the frame whose `__except == buf[308]`
 (my first-cut jumps to the catching function's *first* `__except`, which needs the filter to
-disambiguate). Net: the correct approach needs (a) reliable handler-label/block emission,
-(b) RtlRestoreContext→throw, (c) scope/filter selection — genuinely multi-day. Reverted to
-the stable recover-to-caller baseline.
+disambiguate). **ROOT of the label failure (confirmed):** the `__except` handlers are **MSVC SEH funclets**
+— each `scope.handler` PC is emitted as a **separate `DEFINE_REX_FUNC(sub_<handler>)`
+function** (verified: sub_8242B460, sub_82442384, sub_8230EEF8, sub_8229BAE4 all exist as
+functions), NOT an in-parent label. So `goto loc_<handler>` can *never* work. ⇒ **The correct
+host-SEH dispatch must CALL the funclet**: in the CATCH, restore the parent frame, then
+`sub_<handler>(ctx, base);` (the funclet runs the `__except` body in the parent's frame), then
+resume the parent after the `__try` (≈ `scope.tryEnd`). This replaces piece-1/2/3 above:
+- CATCH: `ctx.r1.u32=__seh_r1; …; sub_<handler>(ctx, base); /* then continue after __try */`.
+- The funclet calling convention (MSVC passes the parent frame pointer; the funclet may set a
+  continuation) + the post-funclet resume (jump to after `__try`) are the intricate parts.
+- Still need RtlRestoreContext(`sub_8242EA70`)→throw so the exception reaches the CATCH, and
+  filter eval to pick the right scope when there are several.
+Net: the correct approach is to **emulate the MSVC __except-funclet model** (call the funclet
++ resume after the try + filter) — genuinely multi-day. Reverted to the stable
+recover-to-caller baseline (verified: town renders, no crash).
 
 The sections below are the reasoning trail (the setjmp/longjmp "approach B" is historical).
 
