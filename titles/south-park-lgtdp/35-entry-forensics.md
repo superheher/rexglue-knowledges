@@ -1,5 +1,31 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
+> ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
+> After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
+> dereferencing `.data[0x8260E0F0]=0xA1`. Verified with the instrumented canary's
+> `DATATRACE` probe:
+> - canary + **STFS package**: `[0x8260E0F0]=0x8260E0C0` (and `[..E0]=0x8259271C` … —
+>   valid vtable/function pointers). ✅
+> - canary + the recomp's **loose `private/extracted/default.xex`**: `[0x8260E0F0]=0xA1`
+>   (`0x91,0x29,0x9E,0x0D,0xA1,…` — garbage). ❌ **same as the recomp.**
+>
+> Same emulator, same decryption — only the **input file** differs. ⇒ **the loose
+> `default.xex` I extracted from the STFS is corrupt** (the extractor mangled later
+> STFS blocks / the `.data`; `.text` survived, which is why `xstart` disassembled
+> correctly and a lot of code ran). The recomp's runtime loads this corrupt file →
+> corrupt `.data` → boot crash. This likely explains *many* downstream failures, not
+> just `[0x8260E0F0]`.
+>
+> **Fix = give the recomp correct content.** rexglue *has* an STFS device
+> (`filesystem/devices/stfs_container_device.cpp`) but `rex_app.cpp` requires
+> `--game_data_root` to be a **directory** (`is_directory`), so it can't mount the STFS
+> package directly. Options: (a) re-extract `default.xex` (and assets) correctly from
+> the STFS with a block-chain-correct extractor and replace `private/extracted/`; (b)
+> teach `rex_app` to mount the STFS package via `stfs_container_device` (like canary's
+> `--target`). **If `.text` is also affected, the codegen must be regenerated from the
+> correct `default.xex`.** This is the active blocker. (Earlier memory already flagged
+> "recomp uses LOOSE content … suspect" — now confirmed.)
+
 > ## ✅ BOOT CONTINUATION FIXED + VERIFIED IN THE RECOMP (2026-05-23)
 > Two SDK patches make the recomp carry control past the entry trampoline into the
 > boot driver, exactly like Xenia canary:
