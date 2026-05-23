@@ -24,15 +24,32 @@ Two findings change the plan:
    setjmp site, so it cannot reach the handler. (It would only work if capture==resume, i.e.
    `EXCEPTION_CONTINUE_EXECUTION`, which is not the try/except case the worker hits.)
 
-**⇒ Required approach = mid-function entry.** `RtlRestoreContext` must resume at an arbitrary
-guest PC (`buf[308]`). The static recomp dispatches at function granularity, so this needs a
-**codegen change**: emit functions so they can be *entered at a resume label* (e.g. a
-`resume_pc` parameter + a `switch`/`goto` to the matching `loc_XXXXXXXX` at function entry),
-and an **exception-dispatch** layer (`RtlUnwind`/`__C_specific_handler`/`RtlRestoreContext`
-in the runtime) that, on handle, unwinds the host stack to the handler's frame (a thrown
-host exception caught by a per-thread dispatch loop) and re-enters that function at the
-`buf[308]` label with the restored context. This is the real (multi-session) work; the
-sections below are kept for the reasoning trail (approach B is now historical).
+**⇒ Required approach = host-SEH `CATCH` runs the guest `__except` (NO external mid-function
+entry).** Re-tracing the chain: the `__try`/`__except` lives in **`sub_82456198`** (the
+caller of `sub_8242EA70`); its `__except` = `buf[308]` is *inside `sub_82456198`*. So the
+resume can happen **within `sub_82456198`'s own generated C++ function** — its host
+`SEH_CATCH` block just `goto`s the `__except` label. rexglue **already wraps** such functions
+with `SEH_TRY`/`SEH_CATCH` (`generate_exception_handlers=true`, `SehExceptionInfo` scopes
+from `.xdata`); the first-cut only **stubbed the CATCH** to "recover-to-caller (r3=0)". The
+fix is therefore **bounded codegen + runtime**, not an architecture rewrite:
+1. **Codegen (`function_graph.cpp` SEH_CATCH):** instead of recover-to-caller, dispatch the
+   scope(s): run the `__except` **filter** (scope `filter` addr) with the exception info; on
+   `EXCEPTION_EXECUTE_HANDLER` (1), restore the entry frame and **`goto` the scope `handler`**
+   (the `loc_XXXXXXXX` for `buf[308]`, which is a label in this same function); on
+   `EXCEPTION_CONTINUE_SEARCH` (-1) rethrow to the next wrapped frame; run `__finally`s while
+   unwinding. (The scope handler/filter addresses are already in `SehExceptionInfo`.)
+2. **Runtime throw:** `RtlUnwind` already raises (`seh_raise_guest_unwind`, patch 0007).
+   Make **`sub_8242EA70` (`RtlRestoreContext`) also throw** the same guest-unwind so it
+   propagates to `sub_82456198`'s host `SEH_CATCH` instead of returning to its caller. (Set
+   it up as a runtime override, or special-case in codegen; do NOT use `longjmp_address`.)
+   Hardware faults are already caught by `seh_filter`.
+3. **`RtlCaptureContext` fill** (runtime): write the live `PPCContext` into `buf` (layout
+   above; `thread->thread_state()->context()` + `TranslateVirtual`) so the game's dispatch
+   and the `__except` see a valid context.
+This keeps the non-local jump **inside the C++ function** (host stack unwinds to
+`sub_82456198`'s `catch`, which `goto`s its `__except`) — no need to enter a function
+mid-body from outside. Still multi-piece + needs a regen + iteration, but tractable.
+The sections below are the reasoning trail (the setjmp/longjmp "approach B" is historical).
 
 ## What the title actually uses (observed)
 Standard **Win32 table-based SEH**, split between recompiled CRT code and kernel imports:
