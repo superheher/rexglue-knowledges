@@ -115,6 +115,38 @@ Net: the correct approach is to **emulate the MSVC __except-funclet model** (cal
 + resume after the try + filter) — genuinely multi-day. Reverted to the stable
 recover-to-caller baseline (verified: town renders, no crash).
 
+## ✅ DEFINITIVE FIX RECIPE (4th attempt proved the mechanism, 2026-05-24)
+4th attempt: made `sub_8242EA70` (RtlRestoreContext) **throw** (`seh_raise_guest_unwind`)
+instead of returning-corrupted. Result: the `sub_824711D0` corruption-fault **disappeared**
+(SEHfault=0 — good), but the throw propagated to the **trampoline** `sub_82450FD0`, NOT a
+wrapped `__try`-owner. **Proof that host-SEH-CATCH-in-an-ancestor can NEVER work:** by the
+time `RtlRestoreContext` runs, `RtlUnwind` has already **unwound the `__try`-owner's frame
+off the stack**, so its `__except` is not a host-stack ancestor — it's reached by a **full
+context switch**, not stack propagation. `RtlRestoreContext`'s tail `blr` jumps to
+`buf[308]` = the **handler funclet PC** (a separate `sub_<...>` function), which the recomp
+emits as `return`.
+
+**The fix is a runtime context-switch, 3 pieces (no host-SEH wrapping needed for this path):**
+1. **`RtlCaptureContext` (`xboxkrnl_rtl.cpp:558`, currently a STUB) must FILL the buffer**
+   so `buf[308]`/regs are valid. Get the caller ctx via `XThread::GetCurrentThread()->
+   thread_state()->context()`; write to `TranslateVirtual(r3)` the layout `sub_8242EA70`
+   reads (big-endian): f14–f31@`+0..136`, SP(r1)@`+144`, r13–r31@`+152..296`, CR@`+304`,
+   PC@`+308`=`ctx.lr`, VMX@`+320..`.
+2. **`RtlRestoreContext` (`sub_8242EA70`) must CALL the funclet, not return.** Its resume
+   path already reloads ctx from buf (incl. `ctx.lr=[buf+308]`, `ctx.r1=[buf+144]`); change
+   the final `blr` (emitted as `return`) to **`REX_CALL_INDIRECT_FUNC(ctx.lr); return;`** so
+   it tail-calls the handler funclet at `buf[308]` with the restored context. (Codegen
+   special-case on `sub_8242EA70`, or a fix_recomp_labels rewrite of that blr.) Note the
+   function has two paths — only the resume path (`[buf+312]==0`) gets this; the
+   `[buf+312]!=0` path is the real `RtlUnwind`.
+3. **Continuation:** after the funclet runs the `__except`, the parent resumes after its
+   `__try`. The funclet (MSVC) yields the continuation; validate what `sub_<handler>` returns
+   and where control should go (likely the funclet itself continues the parent). Start
+   without this (just call the funclet) to see how far the worker gets.
+Both #1 and #2 are required together (without #1, `buf[308]` is garbage → bad indirect call).
+Each iteration: SDK build (RtlCaptureContext) + the sub_8242EA70 change + regen/fix + app
+build. Keep the committed stable baseline (renders) to revert to.
+
 The sections below are the reasoning trail (the setjmp/longjmp "approach B" is historical).
 
 ## What the title actually uses (observed)
