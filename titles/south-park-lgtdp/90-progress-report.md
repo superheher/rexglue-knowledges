@@ -88,6 +88,13 @@ bring-up" to **research-grade for this title**, with dynamic proof:
 3. The real `mainCRTStartup` is **not invoked in the normal flow** and could not be
    located by 5+ headless static methods (the binary is extremely C++/vtable/
    singleton/VMX128-dense). [[35-entry-forensics]] table.
+4. **Empirically tested** ("one more shot"): an env-var entry override (patch `0004`)
+   + brute-force over the **65 zero-reference prologue candidates** (the pool that
+   must contain `mainCRTStartup`). **No forced entry boots the game** — candidates
+   return like the stub, crash on garbage pointers, or run briefly then exit; none
+   reaches the game phase. This indicates the boot is **kernel-orchestrated** (state/
+   sequence around the entry), so even the right entry won't boot when forced in
+   isolation. The headless attack surface is now exhausted. [[35-entry-forensics]]
 
 **What would actually unblock it (pick one):**
 - **Interactive decompiler (Ghidra/IDA GUI)** — a human-driven session navigating

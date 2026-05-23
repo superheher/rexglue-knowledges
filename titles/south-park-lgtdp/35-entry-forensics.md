@@ -122,6 +122,36 @@ version reproduces. Cracking it needs **interactive Ghidra/IDA** (a human-driven
 decompiler session — the maintainer has Ghidra + RE expertise) or a **real-hardware
 boot trace**; both are beyond headless autonomous static analysis.
 
+## Empirical "force the entry" experiment — also negative (verify by running)
+
+Static `mainCRTStartup` discovery failed, so we tested it **empirically**: an
+env-var entry override (`REX_ENTRY_OVERRIDE`, patch `0004`) + a brute-force over the
+**65 zero-reference, prologue-having candidates** (`tools/find_zeroref_roots.py` —
+functions called only by the kernel, the pool that must contain `mainCRTStartup`).
+For each: start the recomp's main thread there and watch the run log vs the stub
+baseline (36 lines, ends "Execution complete"). Driven from a logged-on session via
+`schtasks /it` (the runtime needs a desktop for its D3D12 window). Result:
+
+| Outcome | Count | Meaning |
+|---|---|---|
+| Returned like the stub ("Execution complete") | 6 | not the CRT entry |
+| Crashed on a garbage/indirect pointer (`Call to invalid … at 0x00000000/0x6F727452/…`) | 14 | random function run on `r3=0` garbage args |
+| Ran a few seconds then exited, **never reaching the game phase** | ~44 | did some work, then returned/crashed silently |
+
+**No candidate booted the game.** Across multiple signal passes (default log, trace
++noisy log, run-length/exit), **none** progressed past the runtime's pre-launch
+("Translated 0 shaders") into the game phase — no game worker threads, no shader
+translation, no present. (Trace logging didn't help: guest kernel-import calls
+aren't logged even at trace, so the discriminator was reaching the game phase, which
+none did.)
+
+**Interpretation:** forcing any single function as the entry does **not** reproduce
+this title's boot. Combined with "doesn't boot in Xenia" and the stub entry, this is
+strong evidence the boot is **kernel-orchestrated** — it depends on state/sequence
+the kernel sets up around the entry that "call function X on a bare thread" does not
+satisfy. So even the *right* `mainCRTStartup` likely wouldn't boot when forced
+in isolation. This closes the autonomous, headless attack surface.
+
 ## Conclusion / where the unblock must come from
 
 `mainCRTStartup -> _initterm -> main` exists in the image (the game runs on HW) but
