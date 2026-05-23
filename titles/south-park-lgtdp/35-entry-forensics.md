@@ -35,24 +35,28 @@ execute counts; parser `tools/parse_ftrace.py`). Findings:
   …`). (So the long-reverted patch 0002 `r3=-1` matched *canary*; stock master used
   `r3=0`.) The entry still returns; `r3=-1` runs `EC28` which stores 0 to a KTHREAD
   field — likely required thread-state setup.
-- **The boot's first phase is the C++ static initializers.** Many boot functions
-  (`0x821001E8`, `0x82100688`, …) have **`.rdata` caller addresses `0x820DAxxx–0x820E4xxx`**
-  — i.e. `_initterm` iterating the `.CRT$XC`/`.CRT$XI` init-pointer array there. Then
-  the deeper boot (`main` → menu loop `0x82109BB0`, 154M calls) runs via a deep
-  **stack-driven** call chain (`bl` callers recorded as stack addrs `0x7018fbXX–fdXX`).
+- The deeper boot (`main` → menu idle loop `0x82109BB0`, 154M calls) runs under the
+  entry on the main thread.
 
-**So the boot mechanism is now known:** kernel starts the main thread at the stub
-entry with `r3=-1`; the entry returns into a **kernel-set continuation = the CRT
-startup (`mainCRTStartup`)**, which runs `__security_init_cookie`, `_initterm` over
-the init array at `~0x820DAxxx`, then `main`. The recomp's stub entry returns to a
-thread-exit instead — it never runs the static initializers or `main`.
+> **⚠️ Caveat (retraction):** an earlier draft read the `caller_history[4]` values as
+> a clean call graph and inferred "the boot iterates a C++ init array at
+> `0x820DAxxx`." That was **wrong** — `caller_history` here is **noisy** (it mixes
+> stack addresses `0x7018fbXX`, `.data`, and `.rdata` **data** addresses, e.g.
+> `[0x820D0588]`=`"Down"`, `[0x820DACAC]`=UTF-16 data — *not* function-pointer
+> slots). So the trace's caller history **cannot** be used to reconstruct the call
+> graph or pin the init array. Don't trust it for that.
 
-**Fix path (now concrete):** (1) launch main thread with `start_context = -1`
-(re-apply patch 0002); (2) make rexglue run the **CRT startup / static-init array**
-— find `mainCRTStartup` among the 339 traced functions (it calls `_initterm` over the
-`0x820DAxxx` array) and start/continue there, or replicate `_initterm(__xi/__xc)` +
-`main` in a launch hook. The 339-function set + the init-array region `0x820DAxxx`
-make both findable now.
+**What the trace reliably establishes:** (a) canary passes **`r3=-1`** to the entry;
+(b) the boot is **~339 functions**; (c) per-instruction execute-counts give each
+function's exact taken path. It does **not** reliably give the call graph /
+continuation address.
+
+**Fix leads:** (1) launch the main thread with `start_context = -1` (re-apply patch
+0002 — canary-confirmed; *necessary but tested insufficient alone* — the entry still
+returns). (2) The continuation (how the entry leads into the 339-function boot) is
+still unresolved — `caller_history` is too noisy; needs a cleaner trace (a Xenia
+build with proper call-trace, or stepping the entry's return in a debugger) to read
+`[r1+0x68]`. The 339-function set is a useful boot-path reference regardless.
 
 ### Corrected diagnosis + concrete next step (the recomp IS close)
 
