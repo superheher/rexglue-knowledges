@@ -174,6 +174,16 @@ next session:
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
    trampoline (the `xapi_thread_startup` XThread arg, currently 0) rather than
    directly? Cross-check against how Unleashed/other rexglue titles launch.
+4. The real game/CRT code clearly *exists* in the output — the largest functions
+   by call count are `sub_82392840` (199 calls), `sub_82525F20` (192),
+   `sub_825270CC` (166)… — but none are reached from the entry chain. Notably the
+   **early-code region `0x82131xxx`–`0x82132xxx`** (right after `code_base
+   0x82100000`) holds big functions (`sub_82131E60`, `sub_82132188`, ~110 calls
+   each) **and** the cluster of `lfqu`/"unable to decode" warnings — i.e. likely
+   CRT init that is **partially mis-recompiled** (unimplemented FP-quad ops that
+   would `throw`, plus data-in-code mis-disassembly). Implementing those ops and
+   marking the data regions (`[[invalid_instructions]]`) is a concrete lead for
+   getting early init to recompile correctly.
 
 **Status:** boots through the **entire rexglue runtime init** and **executes guest
 code without faulting**; the only crash is a runtime *shutdown* bug (input
