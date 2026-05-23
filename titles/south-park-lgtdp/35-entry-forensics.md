@@ -1,6 +1,52 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
-> ## 🚀 CURRENT STATUS (2026-05-23, latest) — SEH recovery works; boot reaches intro-movie load (~30s)
+> ## 🎉 BREAKTHROUGH (2026-05-23, newest) — THE RECOMP RENDERS THE GAME; hang root-caused to a non-local-jump (SEH context-restore) bug
+> **Verified by screenshot:** after all fixes below + the items here, the recomp **boots
+> stable (no crash)** and **renders the South Park town backdrop via D3D12** (the "SOUTH
+> PARK" sign, snowy mountains, town buildings). Then it presents black frames and **hangs**.
+> Definitive findings (cdb attach + multi-sample + SEH fault backtrace):
+> - **The GPU is NOT hung.** Sampling the CommandProcessor thread shows it doing
+>   `IssueSwap`/`XE_SWAP` (presenting) and only *transient* `WAIT_REG_MEM`s. Instrumenting
+>   `WAIT_REG_MEM` (spin counter → `REXGPU_WARN`) caught **no** permanently-stuck wait.
+>   The main thread's D3D present loop (`sub_821C6E58`→`sub_821B9270`, the Xbox-360 **D3D9
+>   GPU-hang detector** — proven by the DbgPrint strings at guest 0x820DExxx: "The GPU is
+>   hung…", "crashdump.pix2", "gameds@microsoft.com") also keeps looping. So the game is
+>   **presenting black frames while waiting on a worker at the game-logic level** (a loading
+>   wait), NOT a GPU fence stall. No input polling yet → it's stuck *before* interactive.
+> - **The hang's root = a worker thread faults during image/asset loading.** SEH fault
+>   backtrace (added to `seh_win.cpp`): `0xC0000005 write to 0x100000000` (guest addr 0,
+>   `r31=0`) at `sub_824711D0+0x5A1` (a JPEG parser — checks `FF D8` SOI), 14 frames under
+>   the `sub_82450FD0` thread trampoline. My SEH first-cut **catches** this AV → recovers
+>   the worker "to caller as failure" → **the worker thread dies** → its load never
+>   completes → the main thread waits on a never-set completion flag (`bit 0x2` at
+>   `[obj+10941]`) → **black-screen hang**. (The intermittent `SEH: unwind through
+>   sub_82450FD0` is this same fault being caught.)
+> - **Why r31=0:** the parser calls `sub_82456198`→`sub_8242EA70`. **`sub_8242EA70` is a
+>   `longjmp`/SEH context-restore**: it reloads the full nonvolatile context (f14–f31,
+>   r13–r31, v64–v127) from a buffer at `r3`; main path (`[r3+312]==0`) = restore + `blr`
+>   (a **non-local jump** to the restored continuation); else path = `RtlUnwind`. The
+>   recomp emits the final `blr` as plain `return;`, so it **returns to its caller carrying
+>   the restored (setjmp-time) `r1`/`r13–r31`** instead of jumping → caller continues with
+>   `r31=0` → the null write. This is THE blocker: a **non-local control transfer the static
+>   recomp can't express as a C++ return**.
+> - **`setjmp_address`/`longjmp_address` config does NOT fit:** rexglue supports it
+>   (`ppc_setjmp`/`ppc_longjmp`, host setjmp/longjmp keyed by guest buf addr) but there is
+>   **no matching guest `setjmp`** (nothing saves r13–r31 to a `[reg+152..296]` buffer) —
+>   the context is captured by the SEH machinery, not a setjmp call. So the proper fix is a
+>   **fuller SEH resume** (run the guest handler / non-local-jump to the restored context),
+>   the maintainer's chosen "implement SEH" direction. Realistic: deep/iterative.
+> - **Diagnostic tooling (reusable, promoted to general/):** cdb **attach** `-p <pid> -c
+>   "~*k; qd"` dumps all guest stacks (guest fns symbolize as `south_park_td!__imp__sub_X`);
+>   the launch-under-cdb hang does NOT apply to attach. Screenshot the live D3D12 window via
+>   `MainWindowHandle`+`GetWindowRect`+`CopyFromScreen` (PrintWindow → black). `--log_level=
+>   debug` cvar; `--mnk_mode=true` makes keyboard a pad (Escape=Start, Space=A). DbgPrint
+>   string args (lis/addi → guest addr, read from the decrypted image) identify a routine.
+> - Movie aside: intro `sp_xbox_0_intro.wmv` = WMV3+WMA2, 22s, **no decoder** in runtime;
+>   game wants movies under `Movies/en-en/` (locale subdir) — hardlinked locally. Not the
+>   hang (the XMA 0x601 flood is normal background audio; reg 0x601 = lock-marker Xenia
+>   also ignores).
+>
+> ## 🚀 EARLIER STATUS (2026-05-23) — SEH recovery works; boot reaches intro-movie load (~30s)
 > This file is a chronological log; newest first. **Bottom line:** the recomp now boots
 > through the CRT, runs game subsystem init, and reaches **GPU rendering init** (shader
 > translation + pipeline creation) — runtime-verified, ~15s in — then hits an access
