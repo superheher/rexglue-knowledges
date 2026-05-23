@@ -1,6 +1,6 @@
 # Entry-point forensics — why the boot stalls (definitive)
 
-> ## 🚀 CURRENT STATUS (2026-05-23, latest) — boot reaches GPU rendering init (shaders + pipelines)
+> ## 🚀 CURRENT STATUS (2026-05-23, latest) — SEH recovery works; boot reaches intro-movie load (~30s)
 > This file is a chronological log; newest first. **Bottom line:** the recomp now boots
 > through the CRT, runs game subsystem init, and reaches **GPU rendering init** (shader
 > translation + pipeline creation) — runtime-verified, ~15s in — then hits an access
@@ -78,6 +78,26 @@
 > currently provides the D3D12/audio/input/VFS/kernel runtime). SEH is one of the hardest
 > parts of static recomp. Reproduce the boot: re-extract → `rexglue -f codegen` →
 > `tools/fix_recomp_labels.py` → build → run `…/south_park_td.exe`.
+>
+> **UPDATE — first-cut SEH recovery IMPLEMENTED (2026-05-23; maintainer chose this path).**
+> SDK patch `0007-seh-exception-recovery-first-cut.patch`: (a) `init_h.inja` adds the
+> `<rex/platform/exceptions.h>` include; (b) `exceptions.h` includes `<excpt.h>` at **file
+> scope** (it had used `GetExceptionCode/Information` without it — and a naive include INSIDE
+> `namespace rex` caused `winnt.h` `EXCEPTION_DISPOSITION` collisions, so it must be top-level
+> + `_WIN32`-guarded); (c) `function_graph.cpp` captures the caller-saved entry frame
+> (`__seh_r1/__seh_lr/__seh_r13..r31`) before `SEH_TRY` and the `SEH_CATCH_ALL` restores it +
+> sets `r3=0` + `return` (recover-to-caller-as-failure) instead of running handlers against
+> the raise-point frame + rethrowing; (d) `RtlUnwind` raises `kGuestSehUnwindCode` via
+> `seh.h`/`seh_win.cpp` (+ a `seh_filter` case) so the nearest wrapper catches it. Model: an
+> unwind returns to the nearest wrapped caller as failure (no guest filter/handler dispatch
+> or `__finally` yet — future work). SDK rebuilt with `cmake --build --preset
+> win-amd64-release --target install`. **✅ VERIFIED WORKING:** the log shows `SEH: unwind
+> through sub_82450FD0 -> return to caller` (recovery fired) and the boot now runs **~30s**
+> (was 15s), reaching **intro-movie load** (`NtCreateFile … sp_xbox_0_intro.wmv`). The
+> first-cut SEH recovery advanced the boot past the null-image crash. New blockers: (A) the
+> intro WMV isn't found in the VFS (`game:\Media\Assets\Movies\en-en\…` → 0xc000000f), and
+> (B) the fatal `Unresolved branch from 0x82352808 to 0x8235278C` (a codegen gap — add
+> 0x8235278C to the `[functions]` config, like the 0x822E38E0 class).
 
 > ## 🔴 CRITICAL ROOT CAUSE — the recomp ran on CORRUPT content (2026-05-23)
 > After the boot-continuation fix (below) the recomp reached `sub_824499D0` and crashed
