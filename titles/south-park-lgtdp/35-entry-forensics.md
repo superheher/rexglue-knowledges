@@ -18,6 +18,33 @@
 > static tooling/findings below remain accurate as *static* facts; the *conclusions*
 > about bootability are superseded by this correction. See [[90-progress-report]].
 
+### Corrected diagnosis + concrete next step (the recomp IS close)
+
+What canary's boot proves about the mechanism:
+- Canary's **Main XThread** (the XEX entry `0x824499A0`) runs the **full boot** —
+  spawns the game's worker threads via `ExCreateThread`, loads content, inits audio,
+  draws. So entered *correctly*, the entry leads straight into the game init.
+- **Why stock Xenia crashes but canary boots:** Xenia's `XThread` fills the new
+  stack with `0xBE` poison (`xthread.cc:249`). The mid-function entry skips the
+  prologue that would save LR, so its epilogue `lwz r12,-8(r1); mtlr; blr` returns to
+  `[r1-8]`. In stock that slot is poison → `blr 0xBEBEBEBE` crash. **Canary diverged**
+  and boots the same xex (no patch) — so canary sets that return slot (or the thread
+  start) to a valid **boot continuation**.
+- **The recomp's gap:** rexglue sets the entry's return to a clean **thread-exit**
+  trampoline (so the entry "returns" → `Execution complete` → thread ends, no game
+  init). It must instead replicate the kernel/canary thread-startup so the entry
+  continues into the boot.
+- Content is NOT the blocker: `private/extracted/` has the paths the game uses
+  (`media/Assets/Audio`, `UI`, `LuaScripts`, `strings`; 1555 files).
+
+**Concrete next step:** diff **Xenia *canary*'s** thread-launch / entry handling
+(open source: `github.com/xenia-canary/xenia-canary`, `XThread::Execute` /
+`PrepareThreadStartContext` / stack setup) against master and against rexglue's
+`thread_state.cpp` — find what canary puts at the entry's return / how it drives the
+main thread, and replicate it in rexglue (a launch patch). Then re-run with the
+`REX_ENTRY_OVERRIDE` harness off (original entry) and verify game threads spawn. The
+working canary trace (`xbla-refs/xenia-bin/canary_stfs.log`) is the oracle.
+
 This is the deep, tool-backed analysis of South Park's executable entry, refining
 [[30-boot-log]]. Everything here was produced **statically** from the decrypted PE
 image (`tools/xex_decrypt.py --save`, then `tools/pe_inspect.py`, `tools/pdata.py`,
