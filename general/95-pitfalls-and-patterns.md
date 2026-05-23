@@ -22,6 +22,18 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Addresses/jump tables don't match the running game.** → A **Title Update**
   changes code; you recompiled the base. → Apply the `.xexp` and recompile the
   **patched** XEX. (`20`)
+- **Parsing guest structures (`.pdata`, vtables, pointer arrays) yields garbage /
+  ASCII / `0xFFFFFFFF`.** → **Endianness**: PE *headers* are little-endian but all
+  *guest content* is **big-endian**. → Read guest tables big-endian. (`45`)
+- **The `.pdata`/EXCEPTION table isn't where its dir RVA says, or one record spans
+  several functions.** → In a basic-decompressed image the dir RVA can be a page
+  off; and `.pdata` **merges adjacent tiny frame-sharing functions**. →
+  Auto-locate the table by signature; treat a record as *≥1* function and confirm
+  small boundaries via prologues. `.pdata` starts are still the best authoritative
+  **function-boundary** source to feed the recompiler. (`45`)
+- **Tools won't disassemble the title PE ("unknown arch").** → Machine type is
+  **`0x01F2` POWERPCBE**, which `llvm-objdump`/most PE tools don't handle. → Use
+  **capstone** PPC big-endian 32-bit (`file_off = addr - image_base`). (`45`)
 
 ## CPU structural
 - **Trap/`__builtin_trap`/crash at an indirect branch.** → Missing **jump table**
@@ -65,6 +77,13 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   correct and the **entry/binary is the anomaly** (e.g. a stub/mid-function entry)
   — don't keep "fixing" the launch. Verify the actual entry path with a trace
   (`r3` value, which branch). (`70`)
+- **The XEX entry point lands *mid-function* (no prologue at the entry, but a later
+  `addi r1,r1,N` epilogue).** → The title does **not** boot via "call the XEX entry
+  on a fresh thread" — entering cold skips the `stwu` so the epilogue corrupts `r1`.
+  Confirm with the `.pdata` table + a disassembler that the entry has no prologue.
+  → The real `mainCRTStartup` is reached another way (kernel/loader behaviour or an
+  indirect path); finding it needs a **dynamic trace or a decompiler**, not more
+  launch tweaks. (`45`, `70`)
 - **Process crashes on EXIT (nondeterministic AV / `STATUS_HEAP_CORRUPTION`), not
   during play; runs clean under a debugger.** → A **runtime shutdown/teardown**
   bug (e.g. input-listener destructor dereferencing a stale pointer), *not* guest
