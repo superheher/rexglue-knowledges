@@ -54,9 +54,35 @@ fix is therefore **bounded codegen + runtime**, not an architecture rewrite:
 3. **`RtlCaptureContext` fill** (runtime): write the live `PPCContext` into `buf` (layout
    above; `thread->thread_state()->context()` + `TranslateVirtual`) so the game's dispatch
    and the `__except` see a valid context.
-This keeps the non-local jump **inside the C++ function** (host stack unwinds to
-`sub_82456198`'s `catch`, which `goto`s its `__except`) — no need to enter a function
-mid-body from outside. Still multi-piece + needs a regen + iteration, but tractable.
+This keeps the non-local jump **inside the C++ function** (host stack unwinds to the
+`__try`-owner's `catch`, which reaches its `__except`) — no external mid-body entry.
+
+### Precise implementation breakdown (turnkey, ~multi-day; SehScope in `function_types.h`)
+`SehScope = {tryStart, tryEnd, handler, filter}` (filter==0 ⇒ __finally, else __except).
+The structure that works (goto OUT of a host `__except` to an enclosing label IS legal):
+1. **Analysis phase (NOT codegen):** add each `__except` scope's `handler` PC to the
+   function's `labels_` so a `loc_<handler>:` block is emitted + reachable. Blocks are
+   formed from `labels_` during analysis (`FunctionNode::addLabel`), so adding at codegen
+   time is too late. Do it where `SehExceptionInfo` is parsed (phase_register.cpp /
+   parseSehScopeTable) or in a pre-codegen pass: `for s in scopes if s.filter: addLabel(s.handler)`.
+2. **Codegen (`function_graph.cpp`):** emit `__seh_restart:` immediately before `SEH_TRY {`,
+   and at the top of the try body a resume-dispatch:
+   `if (rex_seh_resume()) { u32 rp = rex_seh_resume(); rex_seh_resume()=0; switch(rp){ case 0x<handler>: goto loc_<handler>; ... } }`.
+3. **CATCH (`function_graph.cpp`):** replace the recover-to-caller with: restore the entry
+   frame (as now), then for the relevant `__except` scope set `rex_seh_resume() = s.handler;
+   goto __seh_restart;` (this leaves the host `__except`, re-enters the try, dispatch jumps
+   to the handler in a fresh SEH scope). Keep recover-to-caller as the fallback for
+   __finally-only functions / no matching scope.
+4. **Runtime:** add a `thread_local uint32_t& rex_seh_resume()` accessor (seh.h/seh_win.cpp
+   or init_h.inja).
+5. **Refinements (correctness):** run the scope **filter** (call the guest filter at
+   `s.filter` with the exception code/info) to choose EXECUTE_HANDLER vs CONTINUE_SEARCH
+   (rethrow to the next wrapped frame), and set up the `__except`'s expected ctx
+   (GetExceptionCode/Information). Start without the filter (assume EXECUTE_HANDLER, first
+   `__except`) to validate the structure, then add the filter.
+Build cycle per iteration: SDK build (function_graph.cpp + runtime) → `rexglue -f codegen`
+→ `fix_recomp_labels.py` → app rebuild. Keep the committed stable baseline to revert to.
+
 The sections below are the reasoning trail (the setjmp/longjmp "approach B" is historical).
 
 ## What the title actually uses (observed)
