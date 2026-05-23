@@ -45,24 +45,45 @@
 >   825928AC → 8244B380 → …` (matches the `ftrace.0` set; `82450580` = the outermost
 >   boot fn).
 >
-> **The mechanism is `setjmp`/`longjmp`.** Xenia's `enable_host_guest_stack_synchronization`
-> is **`true` by default**; its cvar help reads *"Records guest/host stack mappings at
-> function starts and checks for reentry at return sites … fixes crashes in games that
-> use **setjmp/longjmp**."* The indirect-branch resolver (`x64_emitter.cc:471
-> ResolveFunction`) detects a jump to a **return site** inside an already-translated
-> function and resumes at the matching host machine code, re-syncing host/guest stacks
-> — i.e. it emulates `longjmp` jumping back into a function body. South Park's CRT boot
-> uses this. In **stock** master the trampoline's slot is poison → the documented
-> `blr 0xBEBEBEBE` crash; canary boots because this feature carries the control flow.
+ **What `xstart` (the entry) actually does, both runtimes (decryption VERIFIED
+> identical).** rexglue's generated `xstart` (`south_park_td_recomp.32.cpp`) decodes the
+> trampoline byte-for-byte the same as the disasm below: `cmpwi r3,-1; bne loc_BC;
+> (r3==-1 path) li r3,0; bl 0x8244EC20; lwz r3,0x54(r1); loc_BC: addi r1,+0x70; lwz
+> r12,-8(r1); mtlr r12; ld r31,-0x10(r1); blr`. With **r3=0** (the main thread's
+> `start_context`) it skips to `loc_BC` and `blr`s to `ctx.lr = [r1+0x68] =
+> [stack_base-0x48] = 0`. So both runtimes run the *same* code; the decrypted image is
+> correct (this rules out a decryption/decompression bug).
 >
-> **⇒ Recomp fix (now tractable, not a mystery value).** There is no magic stack value
-> to write. The recomp early-returns because (a) `build_blr` = C++ `return` doesn't
-> follow control flow across the `blr`, and (b) rexglue's **setjmp/longjmp** handling
-> isn't wired to South Park's CRT `setjmp`/`longjmp`. rexglue *supports* setjmp/longjmp
-> via its config (the project's rexglue path lists "save/restore regs; longjmp/setjmp").
-> **Next: identify the guest `setjmp`/`longjmp` functions and configure them in the
-> rexglue `*_config.toml`, plus the reenter/dispatch so boot proceeds past the entry.**
-> See [[36-setjmp-longjmp-boot]] for the config work.
+> **The boot driver is `sub_824499D0`** (the function right after the trampoline; its
+> own `mflr`/`__savegprlr_28` prologue). In canary the boot-sequence calls (`8242BE98,
+> 82450580, 824504A8, 825928AC, 8244B380, …`) are issued from inside it (the `lr`
+> values at each `BFTRACE` resolve land in `824499D8/E0/E4/F8`). So the live boot is:
+> trampoline `824499A0` → (JIT carries control across the `blr 0`) → `sub_824499D0` →
+> CRT init sequence.
+>
+> **The `blr 0` is handled *inline* by the JIT, not via the resolver.** `BFTRACE` (a
+> probe at the top of the backend `ResolveFunction`, x64_emitter.cc:471) shows the
+> **first** indirect resolve is `8242BE98`, **never `0`** — so the `blr` to `ctx.lr=0`
+> does not go through the resolve thunk; Xenia's x64 `blr`/indirection emission absorbs
+> the 0/invalid target and execution proceeds into `sub_824499D0`. The precise x64
+> sequence that does this (return-shadow / indirection-table default) is the **one
+> remaining detail** — it is what `build_blr` must mimic.
+>
+> **RETRACTION:** the `setjmp`/`longjmp` hypothesis above is **not** supported — a
+> whole-image scan (`tools/find_setjmp.py`) finds **no** classic setjmp/longjmp (save/
+> restore SP+nonvolatiles via the `r3` arg). `enable_host_guest_stack_synchronization`
+> is on, but its longjmp-into-body reentry was **not** observed firing in the captured
+> boot window (all `BFTRACE` targets are function *starts*, not return sites). The
+> continuation is plain JIT control-flow-following, plus the inline `blr 0` handling.
+>
+> **⇒ Recomp fix (structural).** rexglue compiles each guest function as isolated C++
+> (`blr` = `return`), so `xstart` unwinds to `FunctionDispatcher::Execute`, which then
+> stops → "Execution complete". To match canary the recomp must **follow guest control
+> flow past `xstart`**: a reenter/dispatch loop in the dispatcher that, after a function
+> returns, continues at `ctx.lr` (or NIA) while valid — *and* `xstart`'s `blr` to 0 must
+> lead into `sub_824499D0` the way the JIT's inline handling does. Exact `blr 0`→driver
+> link (Xenia x64 emission) is the open item. Decryption and content are NOT the
+> blocker.
 
 > ## ⚠️ CORRECTION (2026-05-23, later same day) — the title DOES boot in Xenia
 > The earlier "does not boot in Xenia / research-grade" verdict in this file was
