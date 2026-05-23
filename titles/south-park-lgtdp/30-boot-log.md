@@ -187,6 +187,21 @@ next session:
    entry is the tail of a utility (linker ICF/COMDAT folding?) and what the real
    bootstrap root is (look for an unreferenced root function that reaches the big
    functions like `sub_82392840`).
+
+   **Narrowed further (verified):** the embedded PE has **no TLS directory**
+   (data dir[9] = 0,0 — so no TLS callbacks drive init), and `.pdata` is at RVA
+   `0xE8C00` size `0x14D80` (~10,672 functions; relocations dir present, delta 0).
+   The init dispatch `sub_8244EC98` does `lwz r11,[0x8260E0F0]; lwz r11,[r11+0x20];
+   bctrl`, but `[0x8260E0F0]` in the **static image is `0x000000A1`** (a small
+   value, not a code pointer) — i.e. that table is populated by **runtime C++
+   static initialization** (`_initterm` over the `.CRT$XC*` arrays), which never
+   runs because the entry stub doesn't call the CRT init and there are no TLS
+   callbacks. **Net: the real boot needs the CRT static-init + `main` path to
+   run; the recompiled code is correct but that path is never entered.** The
+   decisive next step is a **dynamic PC trace from a known-good emulator (Xenia)**
+   on this exact title to see what actually executes from the entry, then
+   replicate it (likely: run `.CRT$XC*` initializers, then call the real `main`).
+   This is RE/dynamic-analysis work beyond static poking — the multi-week core.
 2. Does the title rely on **TLS callbacks / C++ static initializers** that the
    runtime must run before/around the entry? (XEX `TLS_INFO` is present.)
 3. Does the XDK startup expect the entry to be invoked by an `XapiThreadStartup`
