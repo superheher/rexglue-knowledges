@@ -68,6 +68,14 @@ function/variable addresses. For recompilation:
 - The set of **distinct ordinals** is the concrete backlog of host functions to
   provide (most already exist in a mature runtime; you fill the gaps). Map
   ordinals → names via Xenia's import tables / Free60.
+- **Recon shortcut:** the import-libraries optional header is *plaintext* (it
+  sits in the XEX header, not the encrypted PE), so you can read the **per-library
+  import-record count** with no AES key — a fast upper bound on the shim backlog
+  before any decompression. Layout: `u32 size; u32 string_table_size; u32
+  lib_count;` then the name string table, then per-library descriptors
+  (`u32 size; u8 digest[0x14]; u32 id; u32 ver; u32 ver_min; u16 name_index;
+  u16 count; u32 records[count]`). The exact ordinal *numbers* still require the
+  decompressed image (the recompiler emits them).
 - Some imports are **data**, not functions (e.g. `KeTimeStampBundle`); handle
   accordingly.
 

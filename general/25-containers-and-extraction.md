@@ -29,6 +29,31 @@ Structure essentials (for read-only extraction you can ignore the signatures):
   read-write flag changes backup-hash spacing. **Block→offset conversion must
   skip these hash blocks** — the one piece of real arithmetic in an extractor.
 
+#### Block → offset (the one real computation, validated)
+
+For a logical data block `b`, the byte offset in the package is:
+
+```
+f = 1 if (blockSeparation & 1) else 2     # hash-table copies: 1 read-only, 2 read-write
+backing(b) = b + f * ( b//0xAA + b//0x70E4 + b//0x4AF768 )
+offset(b)  = 0xC000 + backing(b) * 0x1000
+```
+
+`0xAA`=170 (L0 stride), `0x70E4`=170² (L1), `0x4AF768`=170³ (L2). Equivalent
+"hash-before" formulations exist (Velocity's `ComputeBackingDataBlockNumber` with
+base `0xB000`); they differ by a constant `+1`/`−0x1000` that cancels — pick one
+and **validate against anchors**: e.g. file-table block `0` → `0xC000`, and the
+known `default.xex` start block → its `XEX2` magic. Volume-descriptor fields
+needed: `blockSeparation` (bit0), `fileTableBlockNumber`, `fileTableBlockCount`.
+
+Each file-table entry's flag byte has **bit6 = "contiguous"**: when set (the
+common case for official read-only packages) you can read sequential *logical*
+blocks straight through `offset(b)`; when clear, follow the per-block next-block
+links stored in the L0 hash entries (`0x18`-byte entries: status `@0x14`,
+next-block u24 BE `@0x15`). A reusable Python implementation:
+[[../titles/south-park-lgtdp/10-dump-analysis|the South Park port]]
+ships `tools/stfs_extract.py`.
+
 > An XBLA game is typically a single **`LIVE`** package whose root contains
 > `default.xex` plus the title's files. Title updates and DLC arrive as separate
 > (often small) STFS packages — classify each.
