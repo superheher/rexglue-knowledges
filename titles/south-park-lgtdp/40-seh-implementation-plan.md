@@ -6,6 +6,34 @@ frame, then a worker thread faults during asset load, the SEH first-cut *recover
 guest's exception path **resume** correctly. Companion to [[35-entry-forensics]];
 general lessons in `general/95`, `general/80`.
 
+## ⚠️ CRITICAL UPDATE (after deeper analysis — supersedes "Recommended approach" below)
+Two findings change the plan:
+1. **`RtlCaptureContext` is a no-op STUB** in the runtime (`xboxkrnl_rtl.cpp:558`,
+   `"[STUB] … not implemented"`) — it never fills the buffer, so `sub_8242EA70` restores
+   **garbage** (the `r31=0`). Filling it (the "setjmp" save: f14–f31@0, SP@144, r13–r31@152,
+   CR@304, PC@308=`lr`, VMX@320, big-endian) is part of any fix. Get the current thread's
+   `PPCContext` via `thread->thread_state()->context()`; write guest mem via
+   `REX_KERNEL_MEMORY()->TranslateVirtual`.
+2. **The `setjmp_address`/`longjmp_address` shortcut (approach B below) is RULED OUT.**
+   rexglue's mechanism (context.cpp:170–188) special-cases the *call sites*: a `setJmpAddress`
+   call saves a PPCContext snapshot + host `setjmp`; a `longJmpAddress` call host-`longjmp`s
+   back **to that setjmp site**. But Win32 SEH does **not** resume at the capture site: on
+   `EXECUTE_HANDLER`, `__C_specific_handler` → `RtlUnwind` → `RtlRestoreContext`
+   (`sub_8242EA70`) jumps to **`buf[308]` = the `__except` block** (a *mid-function* PC),
+   which ≠ the `RtlCaptureContext` return point. Host setjmp/longjmp can only resume at the
+   setjmp site, so it cannot reach the handler. (It would only work if capture==resume, i.e.
+   `EXCEPTION_CONTINUE_EXECUTION`, which is not the try/except case the worker hits.)
+
+**⇒ Required approach = mid-function entry.** `RtlRestoreContext` must resume at an arbitrary
+guest PC (`buf[308]`). The static recomp dispatches at function granularity, so this needs a
+**codegen change**: emit functions so they can be *entered at a resume label* (e.g. a
+`resume_pc` parameter + a `switch`/`goto` to the matching `loc_XXXXXXXX` at function entry),
+and an **exception-dispatch** layer (`RtlUnwind`/`__C_specific_handler`/`RtlRestoreContext`
+in the runtime) that, on handle, unwinds the host stack to the handler's frame (a thrown
+host exception caught by a per-thread dispatch loop) and re-enters that function at the
+`buf[308]` label with the restored context. This is the real (multi-session) work; the
+sections below are kept for the reasoning trail (approach B is now historical).
+
 ## What the title actually uses (observed)
 Standard **Win32 table-based SEH**, split between recompiled CRT code and kernel imports:
 - `__imp__RtlCaptureContext` (×5 call sites) — captures the current CPU context into a
