@@ -84,6 +84,21 @@
 > lead into `sub_824499D0` the way the JIT's inline handling does. Exact `blr 0`→driver
 > link (Xenia x64 emission) is the open item. Decryption and content are NOT the
 > blocker.
+>
+> **ROOT CAUSE (concrete) — rexglue mis-split a `.pdata` function.** `.pdata` (the
+> authoritative table; `tools/pdata.py find 0x824499D0`) defines **ONE** function
+> `0x824499A0..0x82449B58`. The real `mflr`/`__savegprlr` prologue is at `0x824499D0`
+> (**offset +0x30**, *inside* it) — i.e. `0x824499A0..0x824499CC` is a pre-prologue
+> thread-start check and `0x824499D0..` is the body (XapiThreadStartup proper / boot
+> driver). rexglue **split** it at the internal `blr` (`0x824499CC`) into two C++
+> functions (`xstart` + `sub_824499D0`), so `xstart` returns and the body is orphaned.
+> Forcing the boundary with rexglue's **`[functions]`** config
+> (`0x824499A0 = { size = 0x1B8 }`, config.cpp:183) is *necessary but not sufficient*:
+> `build_blr` still emits `return` at the internal `blr`.
+> **Tested:** `REX_ENTRY_OVERRIDE=0x824499D0` (launch the body directly) → **access
+> violation 0xC0000005** (the body needs the pre-check's context/continuation). So the
+> fix is the trampoline→body control flow (`build_blr` following `ctx.lr`/fall-through
+> within the merged function), **not** a direct entry swap. See [[general/80-patching-hooks-overrides]].
 
 > ## ⚠️ CORRECTION (2026-05-23, later same day) — the title DOES boot in Xenia
 > The earlier "does not boot in Xenia / research-grade" verdict in this file was
