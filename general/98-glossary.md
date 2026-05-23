@@ -64,7 +64,7 @@
   guest memory load/store.
 
 - **rexglue / ReXGlue** — integrated Xbox 360 recomp **SDK + runtime** used here
-  as the primary toolchain. See [[10-toolchain]].
+  as the primary toolchain. See [[30-toolchains]].
 
 - **PSReX** — rexglue's PowerShell module exposing `rex-configure` / `rex-build`
   / `rex-test` / `rex-format` / `rex-lint` / `Invoke-ReXSetup`.

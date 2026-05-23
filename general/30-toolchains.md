@@ -1,91 +1,90 @@
-# Toolchain — roles, requirements, decision
+# Toolchains — what exists and how to choose
 
-Three upstream projects are vendored as submodules under `third_party/`. This
-note records what each does, what it needs, and **which one we drive with**.
+Four projects matter for Xbox 360 static recompilation. This is a title-agnostic
+comparison and a decision guide; for the choice made on a specific port, see that
+title's case study.
 
-## At a glance
+## The options at a glance
 
-| Project | Role | Gives us | Notably does *not* give us |
+| Project | Role | Gives you | Notably does *not* give you |
 |---|---|---|---|
-| **XenonRecomp** | PPC (Xenon) → C++ static recompiler | CPU translation; XEX decrypt/decompress; XEXP patching; XenonAnalyse (jump tables); mid-asm hook & function-override patterns | **No runtime** ("making the game work is your responsibility"); no MMIO/XMA; no exceptions |
-| **XenosRecomp** | Xenos shader microcode → HLSL → DXIL/SPIR-V | Shader translation reference; shader-cache builder (XXH3) | Heavily **Unleashed-specific** ("do not expect it to work out of the box") |
-| **rexglue-sdk** | Integrated SDK: codegen **+ runtime** | PPC→C++ codegen (phased), **D3D12 *and* Vulkan** renderer with **own Xenos shader translation**, **XMA**+SDL audio, SDL input, VFS, kernel/XAM objects, `rexglue init` scaffolder, **PSReX** PowerShell lifecycle, bundled `powerpc-none-elf` binutils | Maturity — it is **early development**; still "not a turnkey solution" |
+| **XenonRecomp** (hedge-dev) | PPC (Xenon) → C++ recompiler | CPU translation; XEX decrypt/decompress; XEXP patching; `XenonAnalyse` (jump tables); the clearest **config spec** (save/restore, longjmp, boundaries, invalid-instr, switch tables, mid-asm hooks) | **No runtime** ("making the game work is your responsibility"); no MMIO/XMA; no exceptions |
+| **XenosRecomp** (hedge-dev) | Xenos shaders → HLSL → DXIL/SPIR-V | Shader translation; XXH3 shader-cache builder | Heavily **Unleashed-specific** ("do not expect it to work out of the box") |
+| **rexglue-sdk** (ReXGlue) | Integrated SDK: codegen **+ runtime** | Phased PPC→C++ codegen; **D3D12 *and* Vulkan** renderer with **own shader translation**; **XMA**+SDL audio; SDL input; VFS; kernel/XAM; `rexglue init` scaffolder; **PSReX** PowerShell lifecycle; bundled `powerpc-none-elf` binutils | Maturity — **early development**; still "not a turnkey solution" |
+| **rexdex's recompiler** | OG 360 PPC→C++ recompiler | The original proof of concept; historical/reference value | Older approach; less active |
 
-## Decision
+All build with / target **Clang** (compiler-specific intrinsics & codegen); MSVC
+and GCC are not the supported path for the output.
 
-**Drive with `rexglue-sdk` as the primary toolchain.** Rationale:
+## How to choose
 
-- It is the only one of the three that ships a **runtime**, which XenonRecomp
-  explicitly leaves to you. Building a host from scratch is the bulk of the work
-  it removes.
-- It has a clean, scriptable **per-title workflow** (`rexglue init` →
-  `*_config.toml` → `cmake --build --target <app>_codegen` → build) and a
-  **PowerShell** lifecycle (PSReX: `rex-configure` / `rex-build` / `rex-test` /
-  `rex-format` / `rex-lint`) — a direct fit for this Windows 11 host.
-- It targets **D3D12** (ideal for the native Windows host) *and* Vulkan, and
-  performs **its own shader translation**, so XenosRecomp's per-game shader
-  surgery is not on the critical path.
-- It bundles the **PPC binutils** and a phased analyzer (discover → scan →
-  register → merge → gap-fill → validate) with vtable/signature scanners, which
-  helps with the function-boundary/jump-table problem (risk R3 in
-  [[00-feasibility-analysis]]).
+```
+Need a runtime too (kernel/GPU/audio/input), not just code translation?
+├─ Yes → start with rexglue-sdk (integrated; scaffolder; D3D12/Vulkan; XMA).
+│        Keep XenonRecomp/XenosRecomp as reference + fallback.
+└─ No / you already have a runtime (e.g. forking the Unleashed runtime)
+         → XenonRecomp (+ XenosRecomp) into your own host.
 
-**Keep XenonRecomp + XenosRecomp as references / fallback / cross-check:**
+On Windows and want the smoothest scripted lifecycle? → rexglue + PSReX.
+Hit a rexglue rough edge that blocks a milestone? → fall back to
+XenonRecomp + custom runtime for that piece (the proven Unleashed recipe).
+Shader mistranslated by the runtime path? → cross-check with XenosRecomp's
+prebuilt-cache path.
+```
 
-- XenonRecomp's docs are the clearest spec of the per-title knobs (register
-  save/restore addresses, `longjmp`/`setjmp`, `functions`, `invalid_instructions`,
-  switch tables, mid-asm hooks) — invaluable when debugging rexglue codegen.
-- `XenonAnalyse` is a second opinion for jump-table discovery.
-- XenosRecomp's shader-cache approach is the fallback if rexglue's runtime
-  shader path mishandles a specific shader.
-- If rexglue's early-development rough edges block a milestone, the
-  XenonRecomp + custom-runtime path (the proven *Unleashed Recompiled* recipe)
-  remains available.
+**Default recommendation for a fresh port:** drive with **rexglue-sdk** (it
+removes the biggest cost — writing a host from scratch) and keep
+**XenonRecomp + XenosRecomp** vendored as a reference and fallback. Their
+documentation is the canonical spec for the per-title knobs even when you run
+rexglue, and `XenonAnalyse` is a useful second opinion on jump tables.
 
-## Build requirements (host prerequisites)
+## Build prerequisites (host)
 
-| Tool | Needed for | Status on this host (2026-05-23) |
-|---|---|---|
-| **Clang** 18–20+ (clang-cl on Windows / VS2022 "C++ Clang tools") | Building the recompilers **and compiling recompiled output** (Clang-specific intrinsics/codegen) | **MISSING — install (R1)** |
-| CMake 3.25+ | All builds | present (4.3.1) |
-| Ninja | Build system | present (1.13.2) |
-| PowerShell 7 (`pwsh`) | PSReX lifecycle | Windows PowerShell 5.1 present; install `pwsh` 7 for PSReX |
-| Python 3 | Extraction/asset tooling | present (3.10.11) |
-| Git | Submodules / VCS | present (2.53) |
-| Vulkan SDK (optional) | Vulkan backend / glslang at build | optional (D3D12 is primary on Windows) |
+| Tool | Needed for |
+|---|---|
+| **Clang 18–20+** (clang-cl on Windows / VS2022 "C++ Clang tools") | Building the recompilers **and compiling the recompiled output** |
+| **CMake 3.25+** | All builds |
+| **Ninja** | Build system |
+| **PowerShell 7 (`pwsh`)** | rexglue's PSReX lifecycle (Windows) |
+| **Python 3** | Extraction / asset tooling |
+| **Git** | Submodules / VCS |
+| Vulkan SDK | *Optional* — only for the Vulkan backend (D3D12 is primary on Windows) |
 
-> **Action:** the single hard prerequisite gap is **Clang**. Everything else is
-> present or optional. Installing LLVM/Clang 20+ unblocks Phase 0.
+> The usual gap on a fresh machine is **Clang** — install LLVM/Clang 20+ first.
 
-## The per-title workflow (rexglue, as documented)
+## rexglue per-title workflow (documented form)
 
 ```pwsh
-# 0. one-time: build/install the SDK (clang 20+, cmake 3.25+, ninja)
+# one-time: build/install the SDK
 cmake --preset win-amd64
 cmake --build --preset win-amd64 --target install
 
-# 1. scaffold the title project
-rexglue init --app_name south_park_td --app_root <south-park-recomp>
+# scaffold a title project
+rexglue init --app_name <app> --app_root <port-dir>
+#   -> CMakeLists.txt, CMakePresets.json, src/main.cpp, src/<app>_app.h,
+#      <app>_config.toml, generated/rexglue.cmake
 
-#    -> CMakeLists.txt, CMakePresets.json, src/main.cpp, src/<app>_app.h,
-#       <app>_config.toml, generated/rexglue.cmake
+# point config at the extracted XEX, then iterate
+#   edit <app>_config.toml: file_path = "private/default.xex" (+ patch path)
 
-# 2. point config at the extracted XEX, set boundaries/imports iteratively
-#    edit <app>_config.toml: file_path = ".../private/default.xex"
+# generate C++ from the XEX (phased codegen; --force to push past unresolved)
+cmake --build --preset win-amd64-debug --target <app>_codegen
 
-# 3. generate C++ from the XEX (phased codegen; --force to push past unresolved)
-cmake --build --preset win-amd64-debug --target south_park_td_codegen
-
-# 4. compile the generated sources + runtime into the app
+# compile generated sources + runtime into the app
 cmake --build --preset win-amd64-debug
 ```
 
-Per-title manual work (expected, not optional): function boundaries, missing
-kernel/XAM imports, iterating on validation errors, and game-specific render
-quirks. This is the loop the `/goal` driver prompt automates.
+PSReX wrappers: `rex-configure` / `rex-build` / `rex-test` / `rex-format` /
+`rex-lint`, plus `Invoke-ReXSetup`.
 
-## Pinned versions
+Per-title manual work is **expected, not optional**: function boundaries, missing
+kernel/XAM imports, iterating on validation errors, and title-specific render
+quirks (see `50`/`60`/`70`).
 
-Submodule commits are pinned by the super-repo gitlinks (see `git submodule
-status`). rexglue-sdk is currently around **v0.8.0**. Because it is evolving
-fast (R2), bump deliberately and re-test after each bump.
+## Versioning caution
+
+rexglue-sdk is **evolving fast** (early development). Pin the submodule commit,
+bump **deliberately**, and **re-test** after each bump — the public API and
+codegen output can change. XenonRecomp/XenosRecomp are more stable but tuned
+around their flagship title; treat their game-specific code as a reference, not a
+drop-in.
