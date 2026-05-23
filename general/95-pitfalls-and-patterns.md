@@ -61,7 +61,14 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   `REX_UNIMPLEMENTED`/`PPC_UNIMPLEMENTED` macro **throws**; any reached
   `lmw`/`stmw`/`lq`/`stq`/`lfq*`/`stfq*`/`ba`/`bla`/exotic-VMX op kills that thread.
   → Implement the op in the recompiler's instruction dispatch/builders (load/store
-  multiple & quad are mechanical loops). (`50`)
+  multiple & quad are mechanical loops). **Watch for asymmetric support:** a
+  recompiler may implement `stmw` (used in prologues) but not its load mirror
+  `lmw` (used in matching epilogues) — then a function using the multiple-word
+  non-volatile-GPR save/restore pair compiles its prologue but throws in its
+  epilogue. Implement both halves of every save/restore pair. *Caveat:* before
+  implementing an "unimplemented" op, check it's in a real function and not
+  **data-in-code** misread as instructions (clustered odd ops like `lfqu`/`lq`
+  next to "unable to decode" usually mean a data region to mark, not code). (`50`)
 
 ## Numeric correctness
 - **Math drifts / subtle errors near zero.** → **Denormal** handling: FPU keeps,

@@ -134,12 +134,15 @@ Two more fixes + a debugger pass refined the picture:
    the game exits immediately, but should be fixed (it masks clean exits and adds
    nondeterminism). Inspect `MnkInputDriver::~MnkInputDriver` /
    `Window::RemoveInputListener` for an uninitialised/freed listener pointer.
-3. **~600 unimplemented PPC instructions** (`lmw`/`stmw`/`lq`/`stq`/`lfq*`/`stfq*`/
-   `ba`/`bla`/some VMX). `REX_UNIMPLEMENTED` *throws*, so any of these on a *reached*
-   path aborts that guest thread. None are hit on the entry path yet (per `sxe eh`),
-   but they will gate deeper code. Implement them in rexglue's
-   `instruction_dispatch.cpp` + `builders/` (load/store-multiple and quad are
-   mechanical; FP-quad needs the FPR pair layout).
+3. **Unimplemented PPC instructions** — `REX_UNIMPLEMENTED` *throws*, so any on a
+   *reached* path aborts that guest thread. **`lmw` now implemented** (patch
+   `0003`): codegen had `build_stmw` but not its load mirror `build_lmw`, so
+   functions using the stmw/lmw non-volatile-GPR save/restore pair threw in their
+   epilogue — a real bug fixed (verified `Unimplemented: lmw` 119 → 0). Remaining
+   ~684 are dominated by `lfqu`/`lq`/`stfqu`/`stfq` clustered in the `0x82132xxx`
+   **data-in-code** region (likely *misdecoded data* — better handled with
+   `[[invalid_instructions]]` than builders) plus a few `ba`/`bla`/VMX. Triage
+   each by whether it sits in a real function before implementing.
 
 ### Decisive: the entry makes ZERO kernel calls
 
