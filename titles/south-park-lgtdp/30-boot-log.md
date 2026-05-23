@@ -274,6 +274,35 @@ follow. The CRT-signature filter (root + `__savegprlr_*` + moderate frame + ≥4
 itself does **not** run C++ static init (verified: it relies on the guest entry's
 `mainCRTStartup` to do it) — so the stub entry is exactly why nothing initializes.
 
+### Cross-check vs Xenia source (rexglue's basis) — launch is correct
+
+Studied Xenia (`xenia-project/xenia`, the emulator rexglue is based on):
+- `KernelState::LaunchModule` (`kernel_state.cc:276`) creates the main thread with
+  **exactly the same args rexglue uses**: `XThread(ks, stack_size, 0,
+  entry_point, 0, X_CREATE_SUSPENDED, true, true)` → `start_context = 0` → guest
+  `r3 = 0`, entry called directly, exit code = `r3` on return.
+- Xenia launches **all** titles (incl. XBLA) through this **one** path;
+  `XamLoaderLaunchTitle` is only a *running* game asking to launch another title,
+  not a startup mechanism.
+- Xenia also guards `stack_base` with a NoAccess page (so the r1-headroom fix,
+  patch 0001, is right for a no-prologue entry) and stores `start_address` at
+  KTHREAD+0x150 (the field South Park's `EC28` reads at `[PCR+0x150]`).
+
+So **rexglue's launch is verifiably correct** (mirrors the proven, game-running
+Xenia). My earlier `r3 = -1` change (patch 0002) was a wrong hypothesis and is
+**reverted**; verified by trace that with `r3 = 0` the entry takes the `bne` path
+and returns immediately (`TRACE xstart entered r3=0`, no EC20/EC28). The two
+remaining patches (0001 r1-headroom, 0003 lmw) are justified.
+
+This sharpens the contradiction: a shipping game cannot have an entry that returns
+immediately under the standard (Xenia-proven) launch — yet South Park's
+triple-verified entry does. So South Park's real startup uses a path **not**
+captured by "call the XEX entry," which is invisible to static analysis of the
+title and to the Xenia-equivalent launch. **Only a dynamic boot trace of South
+Park (Xenia/real HW) can reveal it.** (Caveat: the booting reference ports are all
+*retail* games with normal CRT-startup entries; South Park is *XBLA arcade* — it
+may simply not boot in Xenia's naive path either, i.e. a genuinely hard title.)
+
 **Definitive conclusion:** the recompiled code is correct and complete; the blocker
 is purely the *launch model* — South Park's XEX entry is a stub, its real
 `mainCRTStartup` is reachable only through indirect calls, and locating it (or

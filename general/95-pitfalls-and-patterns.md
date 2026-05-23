@@ -52,6 +52,15 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   XDK entry thunks double as the thread trampoline and run process init only when
   **`r3 == -1`**; the launcher passed `start_context = 0`. → Launch the main
   thread with `start_context = 0xFFFFFFFF`. (`70`)
+- **Recompiled entry runs but the game never starts — is it the launch or the
+  binary?** → Cross-check your runtime's main-thread launch against **Xenia's
+  `KernelState::LaunchModule`** (the canonical model: one `XThread` at the XEX
+  entry, `start_context = 0` → guest `r3 = 0`, exit code = `r3` on return; Xenia
+  uses this for *all* titles incl. XBLA — `XamLoaderLaunchTitle` is only for a
+  running game launching another). If your launch matches Xenia's, the launch is
+  correct and the **entry/binary is the anomaly** (e.g. a stub/mid-function entry)
+  — don't keep "fixing" the launch. Verify the actual entry path with a trace
+  (`r3` value, which branch). (`70`)
 - **Process crashes on EXIT (nondeterministic AV / `STATUS_HEAP_CORRUPTION`), not
   during play; runs clean under a debugger.** → A **runtime shutdown/teardown**
   bug (e.g. input-listener destructor dereferencing a stale pointer), *not* guest
