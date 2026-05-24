@@ -1,14 +1,17 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
-Honest status of the port. **The recomp reaches an in-game TOWER-DEFENSE MATCH:
+Honest status of the port. **The recomp PLAYS A MATCH TO A WIN — single-player is playable:
 boot → intro → title → MAIN MENU → LOCAL GAME → lobby → game-mode (Campaign) → level select
-(Stan's House) → the MATCH renders** (snowy map, enemy path, character units; screenshot-
-verified, **input works**, no crash through the chain). What unlocked the match: the
-lobby→match crashes were a class of null-derefs because the local signed-in player was never
-**enrolled as a session player** (slot state stuck at 1, session object `+2488` uninitialized);
-fixed at the root by routing the local player through `sub_82297F30`'s session-enroll path
-(state→3 + object init), persisted as `fix_recomp_labels` Fix 6. **Remaining for full
-single-player playability: play through to win/lose, save/continue, audio (XMA→SDL).** The recompiled exe brings up
+(Stan's House) → the MATCH (full gameplay HUD; waves of enemies spawn; the units defend) →
+"STAGE COMPLETE!" (win, TOTAL SCORE 2,100) → CONTINUE** — all screenshot-verified, **input
+works**, **no crash anywhere**, rendering correct throughout, the XMA audio thread runs. Two
+root fixes got here: the **image-load setjmp/longjmp EH** (`setjmp_address=0x8242EEA0`/
+`longjmp_address=0x8242EA70`) and the **session-enroll fix** (the local signed-in player was
+never enrolled as a "session player" → a class of lobby→match null-derefs; routed through
+`sub_82297F30`'s enroll path, `fix_recomp_labels` Fix 6). The save subsystem (xam content) is
+implemented in the runtime. **Remaining (quick human play-test):** confirm save persists across
+runs, audio fidelity, and the non-deterministic GPU-fence stall (`sub_821C6E58`, pre-input on
+some runs). Reference: Xenia canary boots this title to its menu (compat #1156). The recompiled exe brings up
 the full rexglue runtime, executes the guest CRT + game init, loads **TGA image assets**,
 renders the **animated intro** (Cartman over the South Park town), passes the intro movie, and
 reaches the **title screen** ("PRESS START"); pressing **Start** advances to the **main menu**
@@ -43,9 +46,9 @@ days of static reasoning. Reference: **Xenia canary boots the title to its menu*
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + ~873 MiB asset tree extracted (corrected STFS math); recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — ~15,000 funcs / 53 TUs → `south_park_td.exe` links & runs. |
 | 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → renders the town backdrop. |
-| 4 Rendering correctness | **Renders through to gameplay** — intro, title, menu, lobby, game-mode, level select, and the **in-game tower-defense MATCH** (Stan's House: snowy map, enemy path, character units) all render correctly (screenshot-verified). Intro WMV is black (no WMV/WMA decoder). Open: a non-deterministic GPU-fence stall (`sub_821C6E58`) on some runs; in-match render fidelity not yet scrutinized. |
-| 5 Audio/input/save | **Input VERIFIED working** — the game polls `XamInputGetState`/`GetKeystroke` and **responds** all the way into a match. Plumbing `XamInput←input_system←mnk/SDL` correct; automation uses the env-gated `REX_INJECT_SCRIPT` injector (synthetic OS keys don't reach SDL; a real focused pad/keyboard works). **Audio + save/continue not yet exercised.** |
-| 6 Polish / packaging | Not started (gated on play-through to win/lose + save). |
+| 4 Rendering correctness | **Renders correctly through a WON match** — intro, title, menu, lobby, game-mode, level select, the **in-game match** (Stan's House: map, enemy units on the path, gameplay HUD), and the **"STAGE COMPLETE!" results screen** all render right (screenshot-verified). Intro WMV is black (no WMV/WMA decoder). Open: a non-deterministic GPU-fence stall (`sub_821C6E58`) on some runs. |
+| 5 Audio/input/save | **Input VERIFIED working through a full match** (`XamInput←input_system←mnk/SDL`; automation uses the `REX_INJECT_SCRIPT` injector, a real pad/keyboard works). **Audio:** XMA decoder thread runs (fidelity needs a human's ears). **Save:** xam-content subsystem implemented; persistence across runs not yet confirmed by a clean exit→re-launch. |
+| 6 Polish / packaging | Largely gated on a human play-test: confirm save-persistence + audio, then polish/packaging. The single-player loop (boot→menu→match→win) works. |
 
 ## What is verified working (run, observed, logged)
 

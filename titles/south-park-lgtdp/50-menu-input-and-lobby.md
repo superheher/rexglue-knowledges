@@ -75,10 +75,14 @@ query on it returns null → crash.
   AHEAD / EXIT GAME" — you can only pause a *running* match), and the XMA audio thread runs. No
   crash through the whole chain. It sits at the pre-wave setup (waves 0/2) — a human starts/plays
   the waves. So the recomp is **playable to an active match**; input works all the way in.
-- **Remaining for full Condition A (a human play-test — not blind-automatable):** play through
-  the waves to **win/lose**, **save/continue**, **audio** fidelity, and the non-deterministic
-  GPU-fence stall (sub_821C6E58; some runs stall pre-input — re-run, or fix the runtime GPU
-  fence write-back). Strategic tower-defense play to a win can't be meaningfully scripted blind.
+- **✅ PLAYS TO A WIN (verified).** Left to run, the match plays out on its own — waves of
+  enemies spawn, the placed units (the boys) defend, and the stage completes: **"STAGE COMPLETE!"
+  (win, TOTAL SCORE 2,100, "Ⓐ CONTINUE")** (screenshot `shot_ll_t410.png`; mid-combat
+  `shot_kk_t260.png`). No crash. So **boot → menu → match → WIN** is verified; CONTINUE proceeds.
+- **Remaining (quick human play-test):** confirm **save persists** across runs (the xam-content
+  subsystem is implemented; my killed-mid-continue run didn't trigger/verify a clean save→exit→
+  re-launch), **audio** fidelity (XMA thread runs), and the non-deterministic GPU-fence stall
+  (`sub_821C6E58`; some runs stall pre-input — re-run, or fix the runtime GPU fence write-back).
 
 ## Open blocker #2 — non-deterministic GPU-fence stall (pre-input on some runs)
 The main thread sometimes spins in `sub_821C6E58` (`while (*[obj+10896] < target) { if
