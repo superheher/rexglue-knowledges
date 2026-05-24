@@ -3,6 +3,13 @@
 A short, honest capstone for both deliverables: the playable port and the reusable KB.
 Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `general/`.
 
+> **v1 STATUS: COMPLETE (per maintainer scope decision 2026-05-24).** v1 = OFFLINE single-player,
+> **playable boot → menu → match → win/lose with rendering, audio, gamepad, save-to-disk, and
+> in-session continue** — all achieved + screenshot-verified. **Cross-restart "continue"** (campaign
+> unlocks persisting after a full relaunch) was scoped **out of v1** by the maintainer and is a
+> documented, root-caused **post-v1 backlog item** (`56-continue-re-map.md`). KB deliverable
+> complete (this report + per-subsystem docs + promoted general lessons + templates).
+
 ## Outcome (honest) — updated 2026-05-24
 - **Playable single-player from boot to a win — achieved and screenshot-verified** (rexglue-sdk):
   `boot → intro → title (PRESS START) → main menu → LOCAL GAME → lobby → CAMPAIGN → CASUAL →
@@ -30,7 +37,9 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
   session-player slot array), but the LOAD writes a different global (`0x828E3A38`)** — that
   asymmetry / missing slot→g_slots apply is the gap. **No runtime-only fix works** (the game ignores
   the preserved disk); needs guest-side RE. Full map + next steps: `56-continue-re-map.md`,
-  `55-save-system.md`. This is the one unmet Condition-A item.
+  `55-save-system.md`. **Per the maintainer's 2026-05-24 scope decision, cross-restart continue is
+  OUT of v1 (post-v1 backlog); v1's save requirement is satisfied by save-to-disk + in-session
+  continue (a level-complete unlocks + auto-advances to the next).**
 - **Open polish:** in-match font-glyph corruption (front-end text is fine — `65-font...md`); audio
   fidelity (thread runs, not ear-verified).
 

@@ -1,6 +1,10 @@
 # Continue (cross-restart save) — reverse-engineering map (2026-05-24)
 
-Resumable RE notes for the one remaining Condition-A gap. **Symptom:** the runtime saves+loads the
+> **Status: POST-v1 BACKLOG** (maintainer scope decision 2026-05-24). v1 ships with save-to-disk +
+> in-session continue; cross-restart persistence is deferred. This doc is the resumable RE map for
+> when it's picked up.
+
+Resumable RE notes for the (post-v1) cross-restart continue gap. **Symptom:** the runtime saves+loads the
 profile correctly (verified: `[PROF-LOAD]`/`[PROF-RD]` fire at boot, `is_set=true`; a `SaveSetting`
 guard can even keep the disk save intact across restart+nav), **but the level-select still shows
 only Stan's House after a restart** — so the game does not apply the loaded save to the in-memory
