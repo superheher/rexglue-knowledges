@@ -68,8 +68,17 @@ query on it returns null → crash.
   is gone, and navigation reaches the actual tower-defense **MATCH** — `boot → intro → title →
   main menu → LOCAL GAME → lobby → game mode (Campaign) → level select (Stan's House) → MATCH`
   (snowy map, enemy path, character units; screenshot-verified). The earlier `sub_82101AF0`
-  null→ready guard is now unnecessary. **Remaining for full playability:** play through to
-  win/lose, save/continue, audio (XMA→SDL), and the non-deterministic GPU-fence stall.
+  null→ready guard is now unnecessary.
+- **The match is an ACTIVE, PLAYABLE session** (verified): the gameplay HUD renders ("WAVE 0/2",
+  currency ×20, health bar, ability tutorial "HIT ENEMIES WITH SNOWBALLS…"), units (the boys) are
+  placed on the map, **Start opens the in-match PAUSE menu** ("GAME PAUSED / RESUME GAME / SKIP
+  AHEAD / EXIT GAME" — you can only pause a *running* match), and the XMA audio thread runs. No
+  crash through the whole chain. It sits at the pre-wave setup (waves 0/2) — a human starts/plays
+  the waves. So the recomp is **playable to an active match**; input works all the way in.
+- **Remaining for full Condition A (a human play-test — not blind-automatable):** play through
+  the waves to **win/lose**, **save/continue**, **audio** fidelity, and the non-deterministic
+  GPU-fence stall (sub_821C6E58; some runs stall pre-input — re-run, or fix the runtime GPU
+  fence write-back). Strategic tower-defense play to a win can't be meaningfully scripted blind.
 
 ## Open blocker #2 — non-deterministic GPU-fence stall (pre-input on some runs)
 The main thread sometimes spins in `sub_821C6E58` (`while (*[obj+10896] < target) { if
