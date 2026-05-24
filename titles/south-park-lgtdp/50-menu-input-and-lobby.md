@@ -79,10 +79,21 @@ query on it returns null → crash.
   enemies spawn, the placed units (the boys) defend, and the stage completes: **"STAGE COMPLETE!"
   (win, TOTAL SCORE 2,100, "Ⓐ CONTINUE")** (screenshot `shot_ll_t410.png`; mid-combat
   `shot_kk_t260.png`). No crash. So **boot → menu → match → WIN** is verified; CONTINUE proceeds.
-- **Remaining (quick human play-test):** confirm **save persists** across runs (the xam-content
-  subsystem is implemented; my killed-mid-continue run didn't trigger/verify a clean save→exit→
-  re-launch), **audio** fidelity (XMA thread runs), and the non-deterministic GPU-fence stall
-  (`sub_821C6E58`; some runs stall pre-input — re-run, or fix the runtime GPU fence write-back).
+- **Remaining for full Condition A — SAVE (deeply investigated; the one piece blind automation
+  can't complete):** the game HAS full save logic — chain `sub_824485F8` (XamContentCreateEx
+  wrapper, validates the content struct or bails error 87) `← sub_82448698 ← sub_82129AE8`
+  (serialize + save, content-type 3) `← sub_82129958` (save-decision) `← sub_82129730`
+  (save-manager) `← {sub_82151170, sub_8215E2E0}` (+ a separate `XamUserWriteProfileSettings`
+  site at recomp.27.cpp:26758). Instrumented the save-decision + the save routine's outcome and
+  ran `boot→match→WIN→CONTINUE+follow` (writable `--user_data_root`) **and** `boot→menu→HELP &
+  OPTIONS`: **0 save-decision fires, 0 XamContent, no save file** (only the shader cache writes —
+  so the write path works). So the save trigger is a **deeper game-flow point** blind navigation
+  doesn't hit (menu nav DOES work — reached HELP & OPTIONS highlighted; but the specific
+  save-triggering interaction — a settings commit, exit-to-dashboard, or a non-tutorial stage,
+  Stan's House being the tutorial — wasn't reached). **The save is implemented and should work
+  for a human** who hits the game's designed save points; a human play-test confirms it. Other
+  remaining: **audio** fidelity (XMA thread runs), the non-deterministic GPU-fence stall
+  (`sub_821C6E58`; re-run, or fix the runtime GPU fence write-back).
 
 ## Open blocker #2 — non-deterministic GPU-fence stall (pre-input on some runs)
 The main thread sometimes spins in `sub_821C6E58` (`while (*[obj+10896] < target) { if
