@@ -152,3 +152,21 @@ wait — the CP, mid command-batch, hits a `WAIT_REG_MEM` waiting for a value th
   accumulated scheduler/runtime state after ~250 launches is what flips this bootstrap race to lose,
   and only a reboot (or that SDK fix) resets it. All boot-fix instrumentation has been reverted to
   clean codegen.
+
+## Update 5 — CORRECTION: the first frame DOES present (screenshot); it's not a black/present stall
+A screenshot of the "frozen" window shows the game **rendering the first intro frame** (the animated
+Cartman-over-the-town scene with an "Ⓐ SKIP" prompt) — **not** a black screen. So the **present/swap
+path works** (frame 1 is composited and shown); my earlier "present/vsync deadlock at the first
+XE_SWAP" framing was wrong. What actually happens: **frame 1 presents, then the guest main thread
+freezes** on its *post-frame-1* GPU-fence wait — the log stays at ~4 KB and `XamInputGetState` is
+never called (the intro never advances to title/menu, and input is never polled, so the
+`REX_INPUT_FILE`/injector can't drive it — the guest isn't reading input yet). It is a **producer/
+consumer bootstrap**: the guest waits for the EOP fence (`0xFFC9B000`) to reach target T for frame 1;
+the CP reached only V<T and the remaining work that would bump it to T is submitted by the guest only
+*after* this wait. Forcing the fence advances the guest ~5 intro frames then it cascades to a third
+wait (confirming the bootstrap). The same build played to a win earlier the same session, so the
+correct fix keeps **rendering correct** (a reboot resets the host state that flips the race, or the
+SDK's CP↔guest fence/EOP-write-back is hardened); forcing fences would corrupt rendering, so it is
+not a valid "playable" path. **Lesson:** a "4 KB frozen log + 0 input polls" is NOT proof of a
+black-screen/early stall — screenshot the window; here it was rendering the intro and stuck one frame
+later, which relocated the bug from the present path to the guest's per-frame fence bootstrap.
