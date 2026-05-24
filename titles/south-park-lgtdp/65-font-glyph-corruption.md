@@ -54,6 +54,14 @@ cells is misinterpreted.
 - compare a static-atlas string (menus) vs this in-match info string — if menu text is
   clean and only in-match dynamic text corrupts, that confirms the dynamic-cache path.
 
+## Fix path (the right tool)
+The runtime has a **GPU trace + texture dump**: cvar `trace_gpu_prefix=<path>` (+
+`trace_gpu_stream`) records a GPU trace, and `src/graphics/trace_dump.cpp` writes textures as
+PNG (`stbi_write_png`). Capture a trace of an in-match frame that shows the corrupted text,
+dump the textures, find the in-match font texture, and inspect its **tile mode / format /
+pitch** vs how the runtime untiles it — that pinpoints the decode bug without guessing. This is
+a substantial follow-up (capture → replay/dump → compare), not a config tweak.
+
 ## Repro
 Full-version run (`--license_mask=1`), enter a match, open the tower/character info for
 Cartman; the description line shows the artifact. Screenshot it (host-side capture) to

@@ -3,22 +3,31 @@
 A short, honest capstone for both deliverables: the playable port and the reusable KB.
 Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `general/`.
 
-## Outcome (honest)
-- **Playable single-player from boot to a win — achieved and screenshot-verified** (with the
-  rexglue-sdk toolchain): `boot → intro → title → main menu → LOCAL GAME → lobby → game-mode
-  (Campaign) → level select (Stan's House) → the MATCH (gameplay HUD, waves spawn, units defend) →
-  "STAGE COMPLETE!" (win, score 2,100) → CONTINUE`. **Rendering correct, gamepad input works all
-  the way through, the XMA audio thread runs, no crash anywhere.** That covers Condition A's
-  "boot → menu → match → win/lose: rendering, audio, gamepad."
-- **Save/continue — fully characterized, not yet demonstrated.** The save subsystem is implemented
-  and correctly wired, but it is **never *requested*** in any flow drivable by automation; it only
-  enqueues a save on a real in-game progress/settings event. See `55-save-system.md`. This is the
-  one remaining Condition-A item; it is verifiable by a human playing to a real save point (the
-  endpoint is left instrumented to self-report).
-- **A late, environment-dependent boot deadlock** appeared after ~250 launch/kill cycles in one
-  long session (present/vsync GPU-sync deadlock; see `60-boot-present-deadlock.md`). The *same
-  build* booted to a match win earlier the same session — this is degraded host GPU-driver/DWM
-  state, cleared by a reboot. Not a defect in the committed artifacts.
+## Outcome (honest) — updated 2026-05-24
+- **Playable single-player from boot to a win — achieved and screenshot-verified** (rexglue-sdk):
+  `boot → intro → title (PRESS START) → main menu → LOCAL GAME → lobby → CAMPAIGN → CASUAL →
+  level select (Stan's House) → the MATCH (HUD, waves, combat) → "STAGE COMPLETE!" (win) →
+  CONTINUE`. **Rendering correct, input works all the way through (driven WITHOUT window focus via
+  `REX_INPUT_FILE`/`live_input.txt`), XMA audio thread runs, no crash.** Covers Condition A's
+  "boot → menu → match → win/lose: rendering, audio, gamepad".
+- **Boot deadlock — RESOLVED by a code fix (no reboot).** The earlier "environment/reboot-only"
+  conclusion was WRONG. Root cause: the command processor's `WAIT_REG_MEM` poll loop slept a fixed
+  **1 ms per unmatched poll** under vsync → the CP starved and froze at frame 1. Fix: **spin-yield
+  (`SyncMemory`+`MaybeYield`) ~8000 polls before any sleep** (+ raise the per-poll log threshold).
+  Boots to the title every run now. See `60-boot-present-deadlock.md` / general/95.
+- **The title runs as a TRIAL by default** (`XamContentGetLicenseMask` returns the `license_mask`
+  cvar, default 0). Trial persists nothing ("UNLOCK FULL GAME"). **Run `--license_mask=1`** (owned
+  copy) → full version.
+- **Save — WRITES to disk in full mode (verified); CONTINUE (cross-restart) — NOT working yet.**
+  In full mode the game writes profile/progress to `userdata/58410931/profile/User/63E83FF*`
+  (trial wrote 0 bytes); completing Stan's House **unlocks the next level in-session** and rewrites
+  the blobs. **But on the next launch the unlock is gone** (level re-locked) — the game reads the
+  saved blobs at boot (instrumented: `[PROF-LOAD]`/`[PROF-RD]` fire, `is_set=true`) yet progress
+  still doesn't carry across a restart; a write during boot/LOCAL-GAME-start appears to reset it.
+  This is the **one remaining Condition-A "continue" gap** (under active diagnosis with
+  `[PROF-*]` instrumentation in the runtime). See `55-save-system.md`.
+- **Open polish:** in-match font-glyph corruption (front-end text is fine — `65-font...md`); audio
+  fidelity (thread runs, not ear-verified).
 
 ## What worked
 - **rexglue-sdk** as the primary toolchain: codegen → config-driven fixups → D3D12 runtime. The
@@ -52,35 +61,31 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
    detection, find the true `setjmp/longjmp` pair by tracing the *caller*, not imports.
 3. **"Unresolved call to 0x…" = a cross-function branch target** — register it; keep the generator
    cumulative/idempotent so re-runs don't regress.
-4. **Boot hang at the first present = a present/vsync deadlock** (swap vsync-wait vs a presenter
-   disruptor claim, and/or a `WAIT_REG_MEM` fence with no escape). Diagnose with `cdb ~*k`; probe
-   with `--vsync=false`. Real fix: timeout/yield escapes + runtime GPU-fence write-back. GPU/DWM
-   state degrades over many D3D12 device cycles — a reboot restores it fast.
+4. **A boot freeze at frame 1 that looks "host-state / reboot-only" can be a CP poll-throttle.**
+   A fixed per-poll `Sleep` in a GPU busy-wait (`WAIT_REG_MEM`) starves the command processor so it
+   falls behind guest frame pacing and freezes — and it looks intermittent across runs (load changes
+   the poll count), which tempts a "degraded driver, reboot" conclusion. **Spin-yield before
+   sleeping** (and don't log per-poll). Diagnose with `cdb ~*k` + a spin counter; `--vsync=false`
+   is a probe, not the fix. (We wrongly concluded "reboot-only" for ~20 cycles; it was a code bug.)
 5. **Verify by running, with live instrumentation** — it beats static reasoning for runtime bugs,
    and it keeps you honest about what's actually demonstrated vs. merely plausible.
 
-## What remains (precise, actionable)
-**Corrected diagnosis (late session):** the boot freeze is NOT a black-screen/present stall — a
-screenshot shows the game **renders the first intro frame** (present works); the guest then freezes
-on its **post-frame GPU-fence bootstrap wait** (`*[0xFFC9B000]` never reaches the target between
-`EVENT_WRITE_SHD` packets). The *same build* played to a match win earlier the session, a
-user-started launch deadlocked identically, and **three correct-direction runtime fixes** (periodic
-ring read-ptr write-back [upstream TODO], per-vblank GPU-counter fence refresh, `WAIT_REG_MEM`
-escape) did **not** resolve it — proving the runtime code is not the bug; the deadlock is **host OS
-scheduler state** accumulated over ~250 launches in one session.
+## What remains (precise, actionable) — updated 2026-05-24
+The boot deadlock is **RESOLVED** (CP `WAIT_REG_MEM` 1 ms-sleep-per-poll throttle → spin-yield fix;
+see Outcome). Driving without focus is done (`REX_INPUT_FILE`/`live_input.txt` + `launch_game.bat`).
+The remaining items:
 
-1. **Reboot** the host to reset that state, then boot default `vsync=true` (it booted to a win
-   earlier the same session). This unblocks everything else; it is the one step that's required.
-2. **Drive it without window focus (new, committed):** `REX_INPUT_FILE` is a focus-independent live
-   input source in `MnkInputDriver` — write XInput button masks (hex) to the file and the runtime
-   applies them each poll, no focus needed. Helpers next to the exe: `launch_game.bat` (launch with
-   it wired in) and `drive_game.ps1` (auto-navigate title→menu→LOCAL GAME→lobby→match→win via the
-   file). Great for remote/RustDesk or automated runs. (Maintainer-requested feature.)
-3. **Save/continue:** once booted, play to a real save point (a non-tutorial stage completion or a
-   settings commit); the left-in `[SAVE-DIAG]` prints `(SAVING)` the instant it fires. Or trace the
-   enqueue (`sub_8229BFE8`/`sub_8229BEB8` family, or what indirectly invokes `sub_8215D348`).
-4. **Durable GPU-sync reliability fix:** harden the CP↔guest fence protocol so the bootstrap can't
-   flip with host timing — e.g. ensure the guest's post-frame fence (`0xFFC9B000`) and read-ptr are
-   refreshed independently of guest packet submission. The three attempted fixes are correct
-   building blocks (committed in `south-park-recomp/patches/`), unverified against boot only because
-   the host-state deadlock blocks verification.
+1. **Continue (cross-restart save) — THE remaining Condition-A gap.** Save WRITES work in full
+   mode, but progress doesn't survive a restart. Instrumentation (`[PROF-RD]/[PROF-WR]/[PROF-LOAD]/
+   [PROF-SAVE]` in `xam_user.cpp` + `user_profile.cpp`) shows the game **does read+load the blobs at
+   boot** (`is_set=true`), so it's not a missing load — a write during boot/LOCAL-GAME-start appears
+   to **reset** the campaign blob to defaults before the level-select reflects it. Next: capture the
+   `[PROF-WR]` that clobbers (which `setting_id`, when) on a restart that has real saved progress,
+   and determine whether it's a game reset on "new local game" vs a runtime profile-identity issue
+   (does the game associate the save with a stable signed-in XUID?). Candidate fixes once located:
+   suppress the default-clobber, or present a stable returning-user profile so the game loads
+   instead of re-initializing.
+2. **In-match font-glyph corruption** (`65-font-glyph-corruption.md`): front-end/menu text is crisp;
+   only the in-match HUD/tooltip text mis-decodes (striped). Fix via the GPU trace + texture dump
+   (`trace_gpu_prefix`, `trace_dump.cpp`) to inspect the in-match font texture's tile mode/format.
+3. **Audio fidelity:** the XMA thread runs; needs ear verification + any conversion fixes.

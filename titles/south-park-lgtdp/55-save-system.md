@@ -39,10 +39,43 @@ only enqueued by a game progress/settings event that blind navigation doesn't re
 > a secondary/unused one. The lever for "does progress save" here is simply **full license +
 > the profile-settings write path** (both working). Continue (load-back on restart) uses the
 > runtime's `UserProfile::LoadSetting` (reads `profile/User/<id>`, `BinarySetting::Deserialize`
-> sets `is_set=true`, and `XamUserReadProfileSettingsEx` returns it) — that path is correct in
-> the runtime. **Caveat:** the in-game *audio/subtitle* SETTINGS did not visibly restore on
-> restart (they may live in an unfired content save, or the game re-defaults them), but
-> **campaign level unlocks are the meaningful progress and they write to the profile blobs.**
+> sets `is_set=true`, and `XamUserReadProfileSettingsEx` returns it) — that path *looks* correct
+> in the runtime.
+>
+> ### ❌ BUT continue (cross-restart) does NOT work — progress resets on restart
+> Verified the hard way: completed Stan's House (level 2 unlocked **in-session**, disk files
+> rewritten 10:10→10:22), then restarted with `--license_mask=1` and went back to the level
+> select → **only Stan's House unlocked again (level 2 re-locked)**, and the profile files were
+> **overwritten at boot (10:28:50) with default content**. So on a new boot the game **starts a
+> fresh profile and clobbers the saved one instead of loading it** — the in-session unlocks never
+> carry across a restart. (Same in-game *audio/subtitle* settings also reset.) So: **SAVE writes
+> happen, but CONTINUE (load-back) is broken.** The likely gap is the **profile-load order**: the
+> game writes a default/fresh profile during boot/sign-in/LOCAL-GAME before (or instead of)
+> reading the saved one — i.e. it never loads `0x63E83FF*` into its in-memory state on boot. To
+> fix/confirm needs instrumentation of the read/write order (`XamUserReadProfileSettings` vs
+> `WriteProfileSettings` calls for `0x63E83FF*` at boot) — does the game even *read* on boot, or
+> only write? Candidate runtime fix: **eagerly load the title-specific settings from disk at
+> sign-in** (so `is_set=true` with saved data) before the game can overwrite them — but only
+> helps if the game then reads them into its own state. **This is THE remaining Condition-A
+> "continue" gap.**
+
+### ✅ DEFINITIVE mechanism (instrumented `[PROF-*]` in the runtime, byte-level proof)
+Completing Stan's House sets **`63E83FFE` offsets 746 & 755 → 1** (level-complete flags) + score
+bytes in `63E83FFF`; `63E83FFD` is constant (`00 01 02 03…`). Saved to disk. Then on restart:
+1. **Boot READS + LOADS the progress** — `[PROF-LOAD] 63E83FFE LOADED 1000 bytes` then
+   `[PROF-RD] 63E83FFE is_set=true`, disk still `FFE[745]=1`. The runtime serves the saved
+   progress correctly; **no clobber at boot.**
+2. **During LOCAL GAME → lobby → CAMPAIGN navigation the game WRITES all three blobs back as
+   DEFAULT** — `[PROF-WR] 63E83FFE` → `[PROF-SAVE]`, disk now `FFE[745]=0`. The game's in-memory
+   campaign state was **default** at write time → it did **not** apply the boot-loaded progress;
+   it **resets on "new local game."** The level-select then reads the just-reset default → only
+   Stan's House unlocked.
+
+So the runtime save/load is correct; the gap is **the game not loading its saved progress into the
+campaign state (it re-inits + clobbers on LOCAL-GAME entry).** Fix needs game-side RE: log the
+guest call-stack at the clobbering `XamUserWriteProfileSettings` to find the reset function, or find
+the campaign-load that *should* apply `63E83FFE` on CAMPAIGN entry. **Within a session progress
+works (a level-complete unlocks + auto-advances to the next); only cross-restart continue is broken.**
 
 ## The chain (endpoint → trigger), all source-verified in the codegen
 | Function | Role |
