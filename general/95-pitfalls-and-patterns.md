@@ -418,3 +418,16 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   Re-derive addresses; keep a hook registry and re-validate after changes. (`80`)
 - **Knowledge keeps getting re-discovered.** → Findings stayed in one title. →
   **Promote general findings here**; that's the point of the KB. (`90`)
+- **A *forced* trigger "verified" a feature that a *real* trigger then broke.** → When you
+  cheat/mod game logic, remember the **engine (native/recompiled code) usually owns the
+  outcome; the script layer (Lua/etc.) is often just presentation.** On South Park: LGTDP the
+  win/lose result is decided by the engine (defense health ≤ 0 → `DefenseKilled` → its own GAME
+  OVER menu); the Lua `GenericLoseLevelSequence` only plays lose music. Redefining that Lua to
+  "play the win sequence" looked correct when **forced** via a direct Lua `EndGame("DefenseKilled")`
+  call (showed STAGE COMPLETE) — but that was a **false positive**: forcing the script call means
+  the engine never entered its real loss state. A **real** loss (zero the health so the *engine*
+  detects it) still showed GAME OVER. → **Verify with the real trigger, not a synthetic one**, and
+  fix at the layer that owns the decision: the working cheat **prevents the lose condition**
+  (keep defense health > 0) rather than dressing up its aftermath. To make a real failure
+  reproducible on demand, drive the *engine's own* state (here: `SetDefenseHealth(0)` to force a
+  genuine `DefenseKilled`, and an incremental drain to stress-test the keep-alive). (`66`)
