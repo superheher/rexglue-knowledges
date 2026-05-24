@@ -57,6 +57,13 @@ The load populates the `0x828E3A38` save-slot, yet the level-select shows level 
    boot vs the lobby sign-in (the lobby is "1/4 SIGNED IN").
 3. The loaded `[slot+52/56]` is a handle/marker, not the unlock flags (unlock processed elsewhere).
 
+## Additional read paths (not yet traced)
+`XamUserReadProfileSettings` is also called directly from **`sub_824C8660`** (recomp.34:54465) and
+again at recomp.34:56861 — separate from the `sub_82406958` wrapper path. One of these may be the
+campaign-progress load that *should* populate `g_slots` (0x828EB348). Trace these: which settings
+(IDs) they request and which global they write — if one targets `0x828EB348`, the asymmetry theory
+narrows to "that path isn't run on CAMPAIGN entry / is mis-translated."
+
 ## How to make progress (concrete)
 - **Instrument the save-slot global:** log reads/writes of `0x828E3A38` region (or the
   `sub_8229CA28` return) with the key, at boot vs at the level-select, to see if the same slot is
