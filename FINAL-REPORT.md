@@ -18,14 +18,19 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
 - **The title runs as a TRIAL by default** (`XamContentGetLicenseMask` returns the `license_mask`
   cvar, default 0). Trial persists nothing ("UNLOCK FULL GAME"). **Run `--license_mask=1`** (owned
   copy) → full version.
-- **Save — WRITES to disk in full mode (verified); CONTINUE (cross-restart) — NOT working yet.**
-  In full mode the game writes profile/progress to `userdata/58410931/profile/User/63E83FF*`
-  (trial wrote 0 bytes); completing Stan's House **unlocks the next level in-session** and rewrites
-  the blobs. **But on the next launch the unlock is gone** (level re-locked) — the game reads the
-  saved blobs at boot (instrumented: `[PROF-LOAD]`/`[PROF-RD]` fire, `is_set=true`) yet progress
-  still doesn't carry across a restart; a write during boot/LOCAL-GAME-start appears to reset it.
-  This is the **one remaining Condition-A "continue" gap** (under active diagnosis with
-  `[PROF-*]` instrumentation in the runtime). See `55-save-system.md`.
+- **Save — WRITES to disk in full mode (verified); CONTINUE (cross-restart) — NOT working; root
+  cause RE'd to a game-side issue.** In full mode the game writes profile/progress to
+  `userdata/58410931/profile/User/63E83FF*` (trial wrote 0 bytes); completing Stan's House
+  **unlocks the next level in-session** and rewrites the blobs. **On the next launch the unlock is
+  gone.** Instrumented (`[PROF-*]`) + a `SaveSetting` guard nailed it: the runtime **loads the save
+  correctly at boot** (`is_set=true`) and a guard can even **keep the disk save intact across
+  restart+nav** — yet the level-select still resets. So the **unlock is driven by the game's
+  in-memory campaign state**, which it **re-inits to default on LOCAL-GAME entry and never populates
+  from the saved profile**. Code-level: the **SAVE serializes `g_slots` (`0x828EB348`, the
+  session-player slot array), but the LOAD writes a different global (`0x828E3A38`)** — that
+  asymmetry / missing slot→g_slots apply is the gap. **No runtime-only fix works** (the game ignores
+  the preserved disk); needs guest-side RE. Full map + next steps: `56-continue-re-map.md`,
+  `55-save-system.md`. This is the one unmet Condition-A item.
 - **Open polish:** in-match font-glyph corruption (front-end text is fine — `65-font...md`); audio
   fidelity (thread runs, not ear-verified).
 
@@ -69,22 +74,32 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
    is a probe, not the fix. (We wrongly concluded "reboot-only" for ~20 cycles; it was a code bug.)
 5. **Verify by running, with live instrumentation** — it beats static reasoning for runtime bugs,
    and it keeps you honest about what's actually demonstrated vs. merely plausible.
+6. **A correct runtime save/load doesn't guarantee "continue" — the GAME may ignore its own save.**
+   Before assuming a persistence bug is in your runtime, prove the runtime end-to-end (it WROTE the
+   bytes, it LOADED them at boot with `is_set=true`) and try a guard that preserves the disk save
+   across a restart. If progress *still* resets, the bug is **guest-side**: the title re-inits its
+   in-memory state on a "new game / lobby" entry and never applies the loaded profile. Tell-tale:
+   the **save and load touch different in-memory globals** (here SAVE serializes one array, LOAD
+   fills another) — there's a missing/broken copy in the guest. No runtime hack fixes this; it needs
+   guest-code RE + a config override. **First check trial vs full: `XamContentGetLicenseMask` returns
+   the `license_mask` cvar (default 0 = trial), and a trial deliberately persists nothing.** (`75`,`95`)
 
 ## What remains (precise, actionable) — updated 2026-05-24
 The boot deadlock is **RESOLVED** (CP `WAIT_REG_MEM` 1 ms-sleep-per-poll throttle → spin-yield fix;
 see Outcome). Driving without focus is done (`REX_INPUT_FILE`/`live_input.txt` + `launch_game.bat`).
 The remaining items:
 
-1. **Continue (cross-restart save) — THE remaining Condition-A gap.** Save WRITES work in full
-   mode, but progress doesn't survive a restart. Instrumentation (`[PROF-RD]/[PROF-WR]/[PROF-LOAD]/
-   [PROF-SAVE]` in `xam_user.cpp` + `user_profile.cpp`) shows the game **does read+load the blobs at
-   boot** (`is_set=true`), so it's not a missing load — a write during boot/LOCAL-GAME-start appears
-   to **reset** the campaign blob to defaults before the level-select reflects it. Next: capture the
-   `[PROF-WR]` that clobbers (which `setting_id`, when) on a restart that has real saved progress,
-   and determine whether it's a game reset on "new local game" vs a runtime profile-identity issue
-   (does the game associate the save with a stable signed-in XUID?). Candidate fixes once located:
-   suppress the default-clobber, or present a stable returning-user profile so the game loads
-   instead of re-initializing.
+1. **Continue (cross-restart save) — THE remaining Condition-A gap; root cause RE'd, fix is
+   guest-side + multi-session.** The runtime save/load is correct (boot loads the blobs,
+   `is_set=true`; a `SaveSetting` non-zero-byte guard preserves the disk save across restart+nav —
+   verified). But the level-select reset persists, so the game's **in-memory campaign state** is
+   what's reset on LOCAL-GAME entry and is not populated from the save. Mapped the call graphs
+   (`56-continue-re-map.md`): **SAVE** `sub_82296A38→sub_82298418→sub_824069C8→XamUserWriteProfileSettings`
+   serializes **`g_slots` (`0x828EB348`)**; **LOAD** `sub_8229C8D0→sub_8229CB38→sub_82406958→
+   XamUserReadProfileSettings` writes a **different global `0x828E3A38`**. The fix needs the guest to
+   apply the loaded `0x828E3A38` slot into `g_slots` on CAMPAIGN entry (find the copy/reset function;
+   it may be a mis-translated function or a flow the blind nav skips), then a config-override /
+   post-codegen fixup. Within a session, progress works (a level-complete unlocks + auto-advances).
 2. **In-match font-glyph corruption** (`65-font-glyph-corruption.md`): front-end/menu text is crisp;
    only the in-match HUD/tooltip text mis-decodes (striped). Fix via the GPU trace + texture dump
    (`trace_gpu_prefix`, `trace_dump.cpp`) to inspect the in-match font texture's tile mode/format.

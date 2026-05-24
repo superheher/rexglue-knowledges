@@ -320,6 +320,18 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Saves don't persist across runs.** → Content APIs not backed by a stable host
   dir, or serialization endianness. → Back `xam` content with a fixed save dir;
   verify BE serialization. (`75`)
+- **The runtime save/load is provably correct, yet "continue" still resets — the GAME ignores its
+  own save.** Prove the runtime end-to-end first: it WROTE the bytes (`XamUserWriteProfileSettings`/
+  `XamContent*`), and it LOADED them at boot (`is_set=true` on the read). Add a temporary
+  `SaveSetting` guard that refuses to overwrite a saved blob with an "emptier" one (fewer non-zero
+  bytes) and confirm the **disk save survives a restart+nav**. If progress *still* resets on screen,
+  the bug is **guest-side**: the title re-initialises its in-memory progress on a "new game / lobby"
+  entry and never applies the loaded profile to it. **Tell-tale: the save and load touch DIFFERENT
+  in-memory globals** (e.g. SAVE serializes one array, LOAD fills another) — a missing/broken
+  guest-side copy. No runtime hack fixes it; it needs guest-code RE (find the apply/copy on the
+  mode-entry path) + a config override / post-codegen fixup. ⚠️ And **before any of this, rule out
+  TRIAL mode** (`XamContentGetLicenseMask` → `license_mask` cvar, default 0 = trial persists
+  nothing; launch `--license_mask=1` for an owned copy). (`75`)
 - **Save never fires / nothing ever persists, even though the save code is all there.**
   → **CHECK TRIAL MODE FIRST.** An XBLA title queries its license via
   **`XamContentGetLicenseMask`**, which returns the runtime's **`license_mask` cvar
