@@ -84,6 +84,15 @@ lis/addi, so not a recomp relocation bug.) Next: dump/inspect the `0x828E3A38` s
   — check it doesn't bypass a profile-apply), and (b) the **missing apply** that should copy the
   loaded `0x828E3A38` cache into g_slots on CAMPAIGN entry. Both are guest-side.
 
+## Enroll/slot-init checked — NOT the apply point
+`sub_82297F30` `loc_82298008` (the session-enroll fix path) inits only the **session-player** part
+of the g_slots slot: `r3=r31+2488; bctrl` (init the +2488 obj), `stw r11,2388(r31)` (set state).
+It does **not** call the load mgr and does **not** populate the campaign-progress fields. So the
+campaign-progress **apply into the slot is a separate step on CAMPAIGN entry** (after the lobby) —
+that is the missing/broken piece (fix target b). Trace the CAMPAIGN-mode-select handler: it should
+copy the loaded `0x828E3A38` cache (or re-read the profile) into the g_slots slot's progress fields;
+if it doesn't (or a mis-translated fn), the slot stays default → level-select resets.
+
 ## How to make progress (concrete)
 - **Instrument the save-slot global:** log reads/writes of `0x828E3A38` region (or the
   `sub_8229CA28` return) with the key, at boot vs at the level-select, to see if the same slot is
