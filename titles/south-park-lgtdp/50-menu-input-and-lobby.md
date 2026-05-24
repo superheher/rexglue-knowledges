@@ -49,6 +49,28 @@ Root cause (read the codegen):
   half-initialized?). Forcing `sub_82297C48` non-null only defers it — the ready FLAG
   `[slot+26]&1` must also be set. A lobby/sign-in **state-machine** problem, not a 1-line bug.
 
+### UPDATE (root-caused) — it's a CLASS, and the local player has no session object
+The lobby→match crash is **one of a class**: many functions call `sub_82297C48(playerIndex)`
+to get a **session-player object** (`&g_slots[i]+2488`) and **deref it unconditionally**
+(`sub_82101AF0` at `[r3+26]`, `sub_8216A8E8` at `[r3+28]`, … the whole `sub_8216Axxx` family).
+`sub_82297C48` returns that object **only if slot state `[slot+2388] ∈ {3,4}`** ("session
+player"), else null. Live data: the **local signed-in player is slot 0 with state = 1** (set by
+`sub_82297F30`'s "signed-in" else-path; empty slots 1–3 get state 3 via its other path, which
+also runs a `bctrl` that **initializes `+2488`**). So the local player is **active but is not a
+session player**: state 1, and its `+2488` object was never initialized. Every session-player
+query on it returns null → crash.
+- **✅ ROOT-FIXED → reaches an in-game MATCH.** In `sub_82297F30`, drop the local player's
+  state-1 shortcut (`li r11,1; goto loc_8229802C`) so its else-path **falls through into the
+  session-enroll path `loc_82298008`** (which runs the `bctrl` that inits `+2488` and sets state
+  3) — i.e. enroll the local signed-in player as a session player. Persisted as
+  `fix_recomp_labels.py` **Fix 6** (post-codegen; the generated file is git-ignored). **Verified
+  on a clean regen** (no diagnostics/guards): slot-0 state becomes **3**, the whole crash class
+  is gone, and navigation reaches the actual tower-defense **MATCH** — `boot → intro → title →
+  main menu → LOCAL GAME → lobby → game mode (Campaign) → level select (Stan's House) → MATCH`
+  (snowy map, enemy path, character units; screenshot-verified). The earlier `sub_82101AF0`
+  null→ready guard is now unnecessary. **Remaining for full playability:** play through to
+  win/lose, save/continue, audio (XMA→SDL), and the non-deterministic GPU-fence stall.
+
 ## Open blocker #2 — non-deterministic GPU-fence stall (pre-input on some runs)
 The main thread sometimes spins in `sub_821C6E58` (`while (*[obj+10896] < target) { if
 (!sub_821B9270()) break; }`) waiting for a **guest GPU fence** that doesn't advance → that run

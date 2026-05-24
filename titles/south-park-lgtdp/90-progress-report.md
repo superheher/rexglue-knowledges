@@ -1,7 +1,14 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
-Honest status of the port. **The recomp is INTERACTIVE: boot → intro → title → MAIN MENU →
-LOCAL GAME → LOBBY** (screenshot-verified, and **input works**). The recompiled exe brings up
+Honest status of the port. **The recomp reaches an in-game TOWER-DEFENSE MATCH:
+boot → intro → title → MAIN MENU → LOCAL GAME → lobby → game-mode (Campaign) → level select
+(Stan's House) → the MATCH renders** (snowy map, enemy path, character units; screenshot-
+verified, **input works**, no crash through the chain). What unlocked the match: the
+lobby→match crashes were a class of null-derefs because the local signed-in player was never
+**enrolled as a session player** (slot state stuck at 1, session object `+2488` uninitialized);
+fixed at the root by routing the local player through `sub_82297F30`'s session-enroll path
+(state→3 + object init), persisted as `fix_recomp_labels` Fix 6. **Remaining for full
+single-player playability: play through to win/lose, save/continue, audio (XMA→SDL).** The recompiled exe brings up
 the full rexglue runtime, executes the guest CRT + game init, loads **TGA image assets**,
 renders the **animated intro** (Cartman over the South Park town), passes the intro movie, and
 reaches the **title screen** ("PRESS START"); pressing **Start** advances to the **main menu**
@@ -36,9 +43,9 @@ days of static reasoning. Reference: **Xenia canary boots the title to its menu*
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + ~873 MiB asset tree extracted (corrected STFS math); recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — ~15,000 funcs / 53 TUs → `south_park_td.exe` links & runs. |
 | 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → renders the town backdrop. |
-| 4 Rendering correctness | **Working through the menus** — the setjmp/longjmp image-EH fix unblocked **TGA asset loading**; the recomp renders the **animated intro**, **title screen**, **main menu**, and **lobby** correctly (screenshot-verified). The intro WMV shows black (no WMV/WMA decoder). Open: a non-deterministic GPU-fence stall (`sub_821C6E58`) on some runs; gameplay rendering not yet reached. |
-| 5 Audio/input/save | **Input VERIFIED** — the game polls `XamInputGetState` and **responds** (Start→menu, A→lobby); plumbing `XamInput←input_system←mnk/SDL` is correct. Driven via the env-gated `REX_INJECT_SCRIPT` injector (synthetic OS keys don't reach SDL under automation; a real focused pad/keyboard works). Audio/save not yet exercised. |
-| 6 Polish / packaging | Not started (gated on lobby → match; next bug = `sub_82101AF0` 0x1A). |
+| 4 Rendering correctness | **Renders through to gameplay** — intro, title, menu, lobby, game-mode, level select, and the **in-game tower-defense MATCH** (Stan's House: snowy map, enemy path, character units) all render correctly (screenshot-verified). Intro WMV is black (no WMV/WMA decoder). Open: a non-deterministic GPU-fence stall (`sub_821C6E58`) on some runs; in-match render fidelity not yet scrutinized. |
+| 5 Audio/input/save | **Input VERIFIED working** — the game polls `XamInputGetState`/`GetKeystroke` and **responds** all the way into a match. Plumbing `XamInput←input_system←mnk/SDL` correct; automation uses the env-gated `REX_INJECT_SCRIPT` injector (synthetic OS keys don't reach SDL; a real focused pad/keyboard works). **Audio + save/continue not yet exercised.** |
+| 6 Polish / packaging | Not started (gated on play-through to win/lose + save). |
 
 ## What is verified working (run, observed, logged)
 
