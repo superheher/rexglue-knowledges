@@ -60,11 +60,27 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
    and it keeps you honest about what's actually demonstrated vs. merely plausible.
 
 ## What remains (precise, actionable)
-1. **Reboot** to clear the degraded GPU/DWM state, then boot default `vsync=true` (it booted to a
-   win earlier today). This unblocks everything else.
-2. **Save/continue:** play to a real save point (full stage completion / a settings commit); the
-   left-in `[SAVE-DIAG]` prints `(SAVING)` the instant it fires. Or trace the enqueue
-   (`sub_8229BFE8`/`sub_8229BEB8` family, or what indirectly invokes the save-handler `sub_8215D348`).
-3. **Harden GPU sync** for reliability: bound the swap vsync-wait + the presenter disruptor claim;
-   add runtime GPU-fence write-back so `WAIT_REG_MEM`/`sub_821C6E58` targets resolve (a committed
-   `WAIT_REG_MEM` stop-gap exists, unverified, in `south-park-recomp/patches/`).
+**Corrected diagnosis (late session):** the boot freeze is NOT a black-screen/present stall — a
+screenshot shows the game **renders the first intro frame** (present works); the guest then freezes
+on its **post-frame GPU-fence bootstrap wait** (`*[0xFFC9B000]` never reaches the target between
+`EVENT_WRITE_SHD` packets). The *same build* played to a match win earlier the session, a
+user-started launch deadlocked identically, and **three correct-direction runtime fixes** (periodic
+ring read-ptr write-back [upstream TODO], per-vblank GPU-counter fence refresh, `WAIT_REG_MEM`
+escape) did **not** resolve it — proving the runtime code is not the bug; the deadlock is **host OS
+scheduler state** accumulated over ~250 launches in one session.
+
+1. **Reboot** the host to reset that state, then boot default `vsync=true` (it booted to a win
+   earlier the same session). This unblocks everything else; it is the one step that's required.
+2. **Drive it without window focus (new, committed):** `REX_INPUT_FILE` is a focus-independent live
+   input source in `MnkInputDriver` — write XInput button masks (hex) to the file and the runtime
+   applies them each poll, no focus needed. Helpers next to the exe: `launch_game.bat` (launch with
+   it wired in) and `drive_game.ps1` (auto-navigate title→menu→LOCAL GAME→lobby→match→win via the
+   file). Great for remote/RustDesk or automated runs. (Maintainer-requested feature.)
+3. **Save/continue:** once booted, play to a real save point (a non-tutorial stage completion or a
+   settings commit); the left-in `[SAVE-DIAG]` prints `(SAVING)` the instant it fires. Or trace the
+   enqueue (`sub_8229BFE8`/`sub_8229BEB8` family, or what indirectly invokes `sub_8215D348`).
+4. **Durable GPU-sync reliability fix:** harden the CP↔guest fence protocol so the bootstrap can't
+   flip with host timing — e.g. ensure the guest's post-frame fence (`0xFFC9B000`) and read-ptr are
+   refreshed independently of guest packet submission. The three attempted fixes are correct
+   building blocks (committed in `south-park-recomp/patches/`), unverified against boot only because
+   the host-state deadlock blocks verification.
