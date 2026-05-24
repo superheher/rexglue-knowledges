@@ -320,6 +320,24 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Saves don't persist across runs.** → Content APIs not backed by a stable host
   dir, or serialization endianness. → Back `xam` content with a fixed save dir;
   verify BE serialization. (`75`)
+- **Save never fires even though the save code is all there.** → Console saves are
+  often **async + request-queued state machines**, not synchronous writes: a
+  per-frame "flush if dirty" pumps a queue only when the game **enqueues a
+  request** / sets a dirty flag. You can watch the flush fire thousands of times
+  with the dirty flag always 0 — that's the *pump*, not the trigger. → Trace to the
+  **enqueue** (who marks dirty / posts the request); don't "force" the dirty gate
+  (that pumps an empty queue). Leave the `XamContent*` endpoint logged so a real
+  playthrough self-reports the save. (`75`)
+- **Boot hangs at the first frame present (no input ever polled).** → A
+  **present/vsync deadlock**: the swap path (`XE_SWAP → IssueSwap →
+  RefreshGuestOutput`) blocks on a vsync wait while a presenter/UI thread spins on a
+  disruptor `wait_until_published` — and/or a `WAIT_REG_MEM` GPU fence the guest
+  never clears. Timing-sensitive; can become ~100% after many D3D12 device
+  create/destroy cycles (degraded driver/DWM vsync). → Diagnose with `cdb -p <pid>
+  -c "~*k; qd"`; probe with `--vsync=false` (clears the present wait, exposes the
+  next fence). Real fix: give the swap vsync-wait + the disruptor claim a
+  **timeout/yield escape**, and add **runtime GPU-fence write-back** so
+  `WAIT_REG_MEM` targets resolve. Reboot restores degraded driver state fast. (`70`)
 
 ## Process / hygiene
 - **A re-codegen wiped your edits.** → You hand-edited **generated** files. → Move
