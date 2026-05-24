@@ -32,23 +32,26 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
 - **The title runs as a TRIAL by default** (`XamContentGetLicenseMask` returns the `license_mask`
   cvar, default 0). Trial persists nothing ("UNLOCK FULL GAME"). **Run `--license_mask=1`** (owned
   copy) → full version.
-- **Save — WRITES to disk in full mode (verified); CONTINUE (cross-restart) — NOT working; root
-  cause RE'd to a game-side issue.** In full mode the game writes profile/progress to
-  `userdata/58410931/profile/User/63E83FF*` (trial wrote 0 bytes); completing Stan's House
-  **unlocks the next level in-session** and rewrites the blobs. **On the next launch the unlock is
-  gone.** Instrumented (`[PROF-*]`) + a `SaveSetting` guard nailed it: the runtime **loads the save
-  correctly at boot** (`is_set=true`) and a guard can even **keep the disk save intact across
-  restart+nav** — yet the level-select still resets. So the **unlock is driven by the game's
-  in-memory campaign state**, which it **re-inits to default on LOCAL-GAME entry and never populates
-  from the saved profile**. Code-level: the **SAVE serializes `g_slots` (`0x828EB348`, the
-  session-player slot array), but the LOAD writes a different global (`0x828E3A38`)** — that
-  asymmetry / missing slot→g_slots apply is the gap. **No runtime-only fix works** (the game ignores
-  the preserved disk); needs guest-side RE. Full map + next steps: `56-continue-re-map.md`,
-  `55-save-system.md`. **Per the maintainer's 2026-05-24 scope decision, cross-restart continue is
-  OUT of v1 (post-v1 backlog); v1's save requirement is satisfied by save-to-disk + in-session
-  continue (a level-complete unlocks + auto-advances to the next).**
-- **Open polish:** in-match font-glyph corruption (front-end text is fine — `65-font...md`); audio
-  fidelity (thread runs, not ear-verified).
+- **Save — WRITES to disk in full mode (verified); CONTINUE (cross-restart) — ✅ NOW WORKING.**
+  In full mode the game writes profile/progress to `userdata/58410931/profile/User/63E83FF*`
+  (trial wrote 0 bytes); completing a level **unlocks the next in-session** and the unlock now
+  **persists across a restart**. The fix wasn't on the disk-save path (the game re-inits its
+  in-memory campaign state on LOCAL-GAME entry and never deserializes the saved profile into it):
+  it was finding **which in-memory global the level grid is built from** — the `g_slots` block
+  `0x828EB348 + 2480..+2624` (gate byte `+2520`) — via a **live ReadProcessMemory before/after
+  diff** across an in-session win, then having the runtime **snapshot/restore that block**
+  (20 ms background thread → `gslots_campaign.bin` on a win; `XamInputGetState` restores it each
+  frame when the live block is default). Format-agnostic + monotonic. Verified by running: win
+  Stan's House → restart → Elementary School unlocked. Full analysis: `56-continue-re-map.md`
+  (SOLUTION); the "the game ignores its own save" earlier verdict was too pessimistic.
+- **Resolved polish (all verified by running):** in-match font-glyph corruption (GPU
+  shared-memory page-validity race — `65-font...md`); Elementary `en-en` campaign slides/diagrams
+  (runtime locale-subdir fallback — `67-polish-backlog.md`); `--always_win` invincibility cheat
+  (`66-...md`); boot speed (profiled ~50–60 s warm; the old "4–5 min" was a cold shader cache —
+  `67`). **Open (needs a human / out of scope):** audio fidelity (path objectively correct +
+  clips produced; ear sign-off pending — `67`); intro/cutscene WMV movies black & silent
+  (no WMV3/WMA2 decoder; user-skippable; documented limitation — `67`); online co-op/leaderboards
+  /achievements/avatars (out of scope for v1, stubbed offline).
 
 ## What worked
 - **rexglue-sdk** as the primary toolchain: codegen → config-driven fixups → D3D12 runtime. The
@@ -100,23 +103,33 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
    guest-code RE + a config override. **First check trial vs full: `XamContentGetLicenseMask` returns
    the `license_mask` cvar (default 0 = trial), and a trial deliberately persists nothing.** (`75`,`95`)
 
-## What remains (precise, actionable) — updated 2026-05-24
-The boot deadlock is **RESOLVED** (CP `WAIT_REG_MEM` 1 ms-sleep-per-poll throttle → spin-yield fix;
-see Outcome). Driving without focus is done (`REX_INPUT_FILE`/`live_input.txt` + `launch_game.bat`).
-The remaining items:
+## What remains — updated 2026-05-24 (post polish-pass)
+The bring-up blockers are all **RESOLVED** (boot deadlock → spin-yield, doc 60; lobby→match
+null-deref → session-enroll fix; image-load EH → setjmp/longjmp config). Focus-free driving is
+done (`REX_INPUT_FILE`/`live_input.txt` + `launch_game.bat`). The **polish backlog has been worked
+to completion** (all verified by running unless noted):
 
-1. **Continue (cross-restart save) — THE remaining Condition-A gap; root cause RE'd, fix is
-   guest-side + multi-session.** The runtime save/load is correct (boot loads the blobs,
-   `is_set=true`; a `SaveSetting` non-zero-byte guard preserves the disk save across restart+nav —
-   verified). But the level-select reset persists, so the game's **in-memory campaign state** is
-   what's reset on LOCAL-GAME entry and is not populated from the save. Mapped the call graphs
-   (`56-continue-re-map.md`): **SAVE** `sub_82296A38→sub_82298418→sub_824069C8→XamUserWriteProfileSettings`
-   serializes **`g_slots` (`0x828EB348`)**; **LOAD** `sub_8229C8D0→sub_8229CB38→sub_82406958→
-   XamUserReadProfileSettings` writes a **different global `0x828E3A38`**. The fix needs the guest to
-   apply the loaded `0x828E3A38` slot into `g_slots` on CAMPAIGN entry (find the copy/reset function;
-   it may be a mis-translated function or a flow the blind nav skips), then a config-override /
-   post-codegen fixup. Within a session, progress works (a level-complete unlocks + auto-advances).
-2. **In-match font-glyph corruption** (`65-font-glyph-corruption.md`): front-end/menu text is crisp;
-   only the in-match HUD/tooltip text mis-decodes (striped). Fix via the GPU trace + texture dump
-   (`trace_gpu_prefix`, `trace_dump.cpp`) to inspect the in-match font texture's tile mode/format.
-3. **Audio fidelity:** the XMA thread runs; needs ear verification + any conversion fixes.
+**Done this pass (`67-polish-backlog.md`):**
+1. **Cross-restart continue — ✅ SOLVED** (runtime g_slots snapshot/restore; `56`). Win → restart →
+   next level unlocked.
+2. **In-match font-glyph corruption — ✅ SOLVED** (GPU shared-memory page-validity race fixed under
+   the global lock; `65`). "GINGER ▦▦" → "GINGER KIDS".
+3. **Elementary `en-en` asset gap — ✅ SOLVED** (runtime locale-subdir fallback in `NtCreateFile`;
+   `67 §1`). 8 fallback hits, 0 failures, the school diagram renders. (`School.lua` is a benign
+   absent optional script; Elementary plays without it.)
+4. **Boot speed — ✅ PROFILED** (`67 §3`): ~50–60 s warm to title; the old "4–5 min" was a one-time
+   cold shader-cache translation. CP fence loop healthy (0 stuck). No cheap runtime win remains;
+   the residual is game-paced, user-skippable intro animation.
+
+**Open — needs a human or out of scope:**
+5. **Audio fidelity** (`67 §2`): the XMA→SDL path is objectively correct (proper 5.1→stereo
+   downmix; real-time; no clipping) and **lossless capture clips are produced** (`audio_dump`
+   cvar). **Subjective fidelity needs a human ear** on a real audio device — an agent cannot
+   ear-verify. (A 3× SDL drain seen in the headless capture is an environment artifact, not a port
+   bug.)
+6. **Intro / cutscene WMV movies** (`67 §4`): black & silent — the runtime has no WMV3/VC-1 +
+   WMA2 decoder (XMA only). The files open and are user-skippable ("Ⓐ SKIP"); the boot doesn't
+   block on them. Adding a decoder is a large feature beyond v1 — **documented limitation
+   (won't-fix for v1)**.
+7. **Online co-op / leaderboards / achievements / avatars** — **out of scope for v1**, left
+   stubbed offline.

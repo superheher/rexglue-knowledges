@@ -1,5 +1,17 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
+> **CURRENT STATUS (updated 2026-05-24, authoritative) — v1 COMPLETE + polish backlog worked.**
+> Single-player is **playable end-to-end and saves**: boot → menu → LOCAL GAME → CAMPAIGN →
+> CASUAL → match → **WIN**, with rendering, gamepad, audio thread, **save-to-disk**, **cross-restart
+> continue** (`56`), the **in-match font fix** (`65`), and the **`--always_win` cheat** (`66`) — all
+> verified by running. **Polish pass done (`67-polish-backlog.md`):** Elementary `en-en` asset gap
+> fixed (locale fallback), boot profiled (~50–60 s warm; the old "4–5 min" was a cold shader cache),
+> audio path confirmed correct + lossless clips produced (ear sign-off pending — needs a human),
+> intro/cutscene WMV documented as a won't-fix limitation (no WMV3/WMA2 decoder), online features
+> out of scope. **The capstone is `FINAL-REPORT.md`; per-subsystem detail in docs 55/56/60/65/66/67.**
+> The narrative below is the *historical* bring-up record (kept for the reusable lessons); where it
+> says "next = the SEH blocker" or "boot → menu achieved", that era is long superseded.
+
 Honest status of the port. **The recomp PLAYS A MATCH TO A WIN — single-player is playable:
 boot → intro → title → MAIN MENU → LOCAL GAME → lobby → game-mode (Campaign) → level select
 (Stan's House) → the MATCH (full gameplay HUD; waves of enemies spawn; the units defend) →
@@ -46,9 +58,9 @@ days of static reasoning. Reference: **Xenia canary boots the title to its menu*
 | 1 Extract & XEX recon | **Done** — `default.xex` (8.1 MB) + ~873 MiB asset tree extracted (corrected STFS math); recon recorded; DLC markers classified (no TU). |
 | 2 Codegen & link | **Done** — ~15,000 funcs / 53 TUs → `south_park_td.exe` links & runs. |
 | 3 Boot bring-up / first frame | **Done** — boots through the CRT → subsystem/handler init → GPU shader/pipeline creation → renders the town backdrop. |
-| 4 Rendering correctness | **Renders correctly through a WON match** — intro, title, menu, lobby, game-mode, level select, the **in-game match** (Stan's House: map, enemy units on the path, gameplay HUD), and the **"STAGE COMPLETE!" results screen** all render right (screenshot-verified). Intro WMV is black (no WMV/WMA decoder). Open: a non-deterministic GPU-fence stall (`sub_821C6E58`) on some runs. |
-| 5 Audio/input/save | **Input VERIFIED working through a full match** (`XamInput←input_system←mnk/SDL`; automation uses the `REX_INJECT_SCRIPT` injector, a real pad/keyboard works). **Audio:** XMA decoder thread runs (fidelity needs a human's ears). **Save:** xam-content subsystem implemented; persistence across runs not yet confirmed by a clean exit→re-launch. |
-| 6 Polish / packaging | Largely gated on a human play-test: confirm save-persistence + audio, then polish/packaging. The single-player loop (boot→menu→match→win) works. |
+| 4 Rendering correctness | **Renders correctly through a WON match** — intro, title, menu, lobby, game-mode, level select, the **in-game match** (map, enemy units, gameplay HUD), and the **"STAGE COMPLETE!" results screen** all render right (screenshot-verified). **In-match font corruption FIXED** (`65`). Boot is reliable (`60`). Intro/cutscene WMV is black & silent (no WMV3/WMA2 decoder — documented limitation, `67`). |
+| 5 Audio/input/save | **Input VERIFIED working through a full match** (`XamInput←input_system←mnk/SDL`; automation uses focus-free `REX_INPUT_FILE`/`live_input.txt` or the `REX_INJECT_SCRIPT` injector; a real pad/keyboard works). **Audio:** XMA→SDL path objectively correct (proper 5.1→stereo downmix, real-time, no clipping); lossless clips captured for ear sign-off (`67`). **Save: WORKS** — save-to-disk in full mode + **cross-restart continue** (`55`, `56`). |
+| 6 Polish / packaging | **Polish backlog worked** (`67`): Elementary `en-en` assets fixed (locale fallback), boot profiled (~50–60 s warm), audio investigated + clips produced, intro WMV limitation documented, online out of scope. Single-player loop (boot→menu→match→win) is complete. Remaining: audio ear sign-off (human); a WMV decoder (out of scope for v1). |
 
 ## What is verified working (run, observed, logged)
 
@@ -145,21 +157,15 @@ small, reproducible accommodations — none research-grade.
   capstone BE-PPC `skipdata`). Reproducible post-codegen fixups beat hand-edits; keep
   upstream patches as files. `general/45`, `general/50`.
 
-## Honest remaining path (the SEH blocker, then iterative bring-up)
+## Honest remaining path — SUPERSEDED (kept for history)
 
-**Immediate next = a fuller Win32-SEH implementation** (the maintainer's chosen direction).
-The boot renders the first frame, then a worker thread takes an SEH path during asset load
-and the first-cut (recover-to-caller) kills it → the main thread hangs presenting black
-frames. The real fix is the **non-local jump / exception resume**: the game uses table-based
-SEH (`RtlCaptureContext`/`RtlUnwind`/`__C_specific_handler` imports + its own
-`RtlRestoreContext` = `sub_8242EA70`). The runtime must drive the exception dispatch so a
-raised exception unwinds to — and **resumes at** — the correct (mid-function) guest handler,
-instead of returning to the caller. There is no guest `setjmp`, so rexglue's
-`setjmp_address`/`longjmp_address` shortcut does not apply. This is the hardest part of
-static recomp (mid-function resume + exception dispatch); realistic effort is deep/iterative.
-**Once a worker can take an SEH path and resume**, the boot should clear the loading wait and
-reach the menu; then Phases 4–6 (rendering correctness, audio XMA→SDL, input, save/continue)
-are the "normal" iteration. The reference emulator (canary boots to menus) de-risks the path.
+> ⚠️ **Obsolete.** This section described the era when the next blocker was a fuller Win32-SEH
+> implementation. That was **resolved**: the post-render hang was NOT table-based SEH but a
+> **custom image-format-detection setjmp/longjmp**, fixed config-only via
+> `setjmp_address=0x8242EEA0`/`longjmp_address=0x8242EA70` (see "What unblocked it" above and
+> `40-seh-implementation-plan.md`). The boot then reached the title/menu/match. **For the actual
+> remaining work see the CURRENT STATUS banner at the top, `FINAL-REPORT.md`, and
+> `67-polish-backlog.md`** (open: audio ear sign-off [human]; WMV decoder [out of scope]).
 
 Diagnostic tooling that made this tractable (reusable): cdb **attach** `~*k` for live
 guest stacks; **screenshot** the D3D12 window by handle; an **SEH fault backtrace** in
