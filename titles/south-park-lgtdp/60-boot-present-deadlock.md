@@ -170,3 +170,19 @@ SDK's CP↔guest fence/EOP-write-back is hardened); forcing fences would corrupt
 not a valid "playable" path. **Lesson:** a "4 KB frozen log + 0 input polls" is NOT proof of a
 black-screen/early stall — screenshot the window; here it was rendering the intro and stuck one frame
 later, which relocated the bug from the present path to the guest's per-frame fence bootstrap.
+
+## Update 6 — the deadlock fence is the CP's per-SUBMISSION progress (NOT counter_/read-ptr)
+Re-reading the live FENCE-DIAG values: under the force-fence the guest's polled fence `*[0xFFC9B000]`
+advanced **+4 each step** (`0x11→0x15→0x19→0x1D→0x21→0x25`) — i.e. it tracks the CP's progress **per
+guest submission**, NOT the vblank `counter_` (which is +1/vblank) and NOT the ring read-pointer.
+So the three runtime "write-back" fixes attempted (periodic read-ptr write-back; per-vblank
+`counter_` fence refresh; `WAIT_REG_MEM` escape) target the **wrong fence** — they are correct,
+harmless improvements but cannot fix this. The actual deadlock is a **producer-consumer bootstrap**:
+the guest waits for `0xFFC9B000` to reach target T, but the CP only advances it to T after processing
+a submission the guest issues **after** clearing this wait — circular. It is NOT a missing
+write-back; the fence is written correctly when the guest submits. It is **timing**: the same build
+won earlier the session (the CP kept pace / the guest submitted T before waiting); the accumulated
+host OS-scheduler state after ~250 launches flips the race so the guest now waits before submitting.
+**Implication for a durable fix:** don't pursue more fence write-backs — instead bound the guest's
+fence wait (give it a timeout/yield so it submits more) or ensure the CP drains submissions ahead of
+the guest's wait; and a **reboot** resets the host scheduler state that flips the race today.
