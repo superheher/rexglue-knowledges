@@ -301,6 +301,22 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   Use the alpha-test **specialization constant** (discard `< threshold`). (`60`)
 - **Whole-screen color/banding off.** → EDRAM **resolve**/gamma/RT-format
   mismatch. → Fix resolve + sRGB/format handling. (`75`)
+- **SOME textures corrupt (striped/garbled) — but only DYNAMIC ones, SELECTIVELY, VARYING per
+  render.** ⇒ This is a **stale-data / skipped-upload race**, NOT a tile-mode/pitch/format/decode
+  bug. Decode bugs are **deterministic and uniform** (corrupt every instance of a texture the same
+  way, every frame); if static/menu textures are clean and only **per-frame-rewritten** textures
+  (dynamic glyph caches, render-to-texture scratch) corrupt, *intermittently*, the data is fine but
+  the runtime occasionally serves it from **stale guest memory because an upload was wrongly
+  skipped**. The "stripes" are just stale bytes run through the (correct) untiler. → Look at the
+  **shared-memory page-validity / invalidation bookkeeping** and the texture-cache re-upload path
+  for a **concurrency bug**: the GPU thread's frame-end "mark pages valid" vs. the guest CPU
+  thread's page-write invalidation must be **mutually atomic** (same lock). On South Park: LGTDP a
+  rexglue rewrite did the valid-flag buffer swap *without* the global lock, so an invalidation
+  cleared a just-retired buffer and the page stayed "valid" for one frame → the request fast-path
+  skipped the re-upload → in-match dynamic text striped (menu text, a static one-time atlas, was
+  always clean). Fix = take the global critical region around the swap. **Confirm cheaply** by
+  forcing all uploads (e.g. disable the "mark valid after GPU write" optimization via its cvar) — if
+  the corruption vanishes, it's the page-state bookkeeping, not the decoder. (`75`)
 
 ## Audio / input / saves
 - **No/garbled audio.** → XMA not decoded or wrong sample-rate/channel/endian. →
