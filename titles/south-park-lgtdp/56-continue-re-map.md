@@ -57,12 +57,17 @@ The load populates the `0x828E3A38` save-slot, yet the level-select shows level 
    boot vs the lobby sign-in (the lobby is "1/4 SIGNED IN").
 3. The loaded `[slot+52/56]` is a handle/marker, not the unlock flags (unlock processed elsewhere).
 
-## Additional read paths (not yet traced)
-`XamUserReadProfileSettings` is also called directly from **`sub_824C8660`** (recomp.34:54465) and
-again at recomp.34:56861 — separate from the `sub_82406958` wrapper path. One of these may be the
-campaign-progress load that *should* populate `g_slots` (0x828EB348). Trace these: which settings
-(IDs) they request and which global they write — if one targets `0x828EB348`, the asymmetry theory
-narrows to "that path isn't run on CAMPAIGN entry / is mis-translated."
+## Additional read paths — `sub_824C8660` RULED OUT
+`sub_824C8660` (recomp.34:54465) reads with **`title_id=0xFFFE07D1`** (the SYSTEM "profile" title,
+not the game) — 3 settings from the id-table at `0x82610C24` into `[r31+160]`. That's the system
+gamer-prefs path (the `0x1004xxxx` settings), **not** the campaign progress. So it's not the
+g_slots loader. ⇒ The campaign load really does go to `0x828E3A38` while the save serializes g_slots
+`0x828EB348` — the asymmetry is genuine, not a second path I missed. **Crux for the fix:** the
+relationship between `0x828E3A38` (load target) and `0x828EB348`/g_slots (save source + what the
+level-select reads). Likely `0x828E3A38` is a save-handle/staging table and the
+`0x828E3A38 → g_slots` apply is missing or not run on CAMPAIGN entry. (The addresses are immediate
+lis/addi, so not a recomp relocation bug.) Next: dump/inspect the `0x828E3A38` struct the load fills
+(`[slot+52]` from `sub_822A2150`) and find who, if anyone, copies it into g_slots.
 
 ## How to make progress (concrete)
 - **Instrument the save-slot global:** log reads/writes of `0x828E3A38` region (or the
