@@ -77,6 +77,20 @@ guest call-stack at the clobbering `XamUserWriteProfileSettings` to find the res
 the campaign-load that *should* apply `63E83FFE` on CAMPAIGN entry. **Within a session progress
 works (a level-complete unlocks + auto-advances to the next); only cross-restart continue is broken.**
 
+### ❌ Runtime guard tried + REVERTED — proves the game ignores the disk for the level-select
+Implemented a `SaveSetting` guard: for `0x63E83FFD/E/F`, refuse a write with fewer non-zero bytes
+than what's on disk (progress flags only grow), so a reset-clobber can't erase the save. **Verified
+it works at the disk level** — after a restart + LOCAL-GAME nav, all three blobs were *preserved*
+(`[PROF-GUARD] kept 63E83FFF (new 8 < existing 22)`, `kept 63E83FFE (new 0 < existing 2)`; disk
+FFD=3/FFE=2/FFF=22 non-zero = full progress). **But the level-select STILL showed only Stan's House
+unlocked.** ⇒ The unlock display is driven by the game's **in-memory campaign state**, which the
+game **re-initializes to default on LOCAL-GAME entry regardless of the saved profile** — it does not
+read the (now-preserved) disk save into that state. So **no runtime-side fix (guard, eager-preload,
+write-suppression) can restore cross-restart continue**; it requires **game-side RE**: find the
+function that should populate the campaign-unlock state from `0x63E83FF*` on CAMPAIGN entry and why
+it isn't applied (or whether a "continue saved game" path exists that the blind nav skips). Guard
+reverted to keep the runtime clean; `[PROF-*]` diagnostics kept (in the patch).
+
 ## The chain (endpoint → trigger), all source-verified in the codegen
 | Function | Role |
 |---|---|
