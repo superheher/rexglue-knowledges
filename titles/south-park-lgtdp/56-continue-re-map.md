@@ -132,6 +132,24 @@ If none writes g_slots, the fix is to add the seed (config function-override tha
 entry, copies the on-demand-queried progress into g_slots) — guest-side, app rebuild + play/restart
 verify. **This is multi-session; the mechanism + candidates are now fully pinned for resumption.**
 
+## All 4 candidates are the SAME on-demand query, gated by `[slot+68]`
+`sub_821046A0`, `sub_821648F8`, `sub_82167890`, `sub_82169D88` all do: `sub_8229C8D0`-load →
+`if r3==0 → 0; r11=[r3+68]; if r11!=0 → 0; else r11=[r3+20]` → store to the caller's OUTPUT (not
+g_slots). So they're **on-demand reads of the loaded campaign field `[slot+20]`, GATED by
+`[slot+68]==0`**. None seeds g_slots. Crucially, **`[slot+68]` is written by the load itself** —
+`sub_8229CB38` line ~8568: `[slot+68] = !(r30 & 1)` where `r30` is the load result/error. So **if
+the load's result makes `[slot+68]≠0`, every query returns default (0)** regardless of the saved
+bytes — which would explain "saved on disk, preserved by the guard, but the game still reads
+default." 
+
+### THE next step (needs runtime instrumentation — app rebuild)
+Instrument the load: in `sub_8229CB38`/`sub_8229C8D0` (or via the SDK read result), log the slot's
+`r30` result and the resulting `[slot+68]` and `[slot+20]` for the campaign blob, during
+boot→CAMPAIGN→level-select. If `[slot+68]≠0`, the load is being treated as "invalid/no-save" — fix
+the load-success path (why `r30` indicates failure for a valid profile in the stub/guest config).
+If `[slot+68]==0` but the level-select still shows default, the level-select doesn't use these
+queries (reads g_slots) → seed g_slots. Either way it's guest-side + verify-by-running, multi-session.
+
 ## How to make progress (concrete)
 - **Instrument the save-slot global:** log reads/writes of `0x828E3A38` region (or the
   `sub_8229CA28` return) with the key, at boot vs at the level-select, to see if the same slot is
