@@ -286,6 +286,22 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   succeed content enumeration with an empty/known set. (`70`)
 - **Threads deadlock or race.** → Wait/dispatcher-object semantics off. → Match
   kernel wait semantics (events/mutants/semaphores) precisely. (`70`)
+- **`NtCreateFile` fails (`0xc000000f` NO_SUCH_FILE) on assets under a locale subdir
+  (`...\en-en\foo.png`), but the file exists in the *parent* dir.** → The retail disc lays
+  localized assets under a locale subdirectory (`en-en`, `Movies\en-en\`, …) and your asset
+  **extraction flattened it** (dropped the locale dir). → **Runtime locale-subdir fallback:** in
+  `NtCreateFile`, on a failed **pure open**, if the path has a middle component matching a locale
+  tag (`xx-yy` = two ASCII letters / `-` / two letters), retry **once** with that component
+  removed and serve the parent-dir file. General + title-agnostic; only fires on failure (a real
+  localized file still wins), and it makes manual "hardlink the assets into an `en-en\` dir"
+  setup steps unnecessary. On South Park: LGTDP this fixed the campaign level-select
+  slides/diagrams (and supersedes the movie `en-en` hardlink). Tell: log shows the same path
+  failing repeatedly with a `\xx-yy\` segment. (`25`, `70`)
+- **A `<LevelName>.lua` (or similar per-entity script) fails to open but the level/entity still
+  works.** → Many engines **probe for an optional per-level/per-entity hook script** and tolerate
+  its absence (the level uses shared scripts + level *data*). If it's genuinely not in the dump
+  and the content plays, it's **benign — don't chase it** (it's not a locale-path miss; the
+  fallback above won't and shouldn't apply). Verify by *playing* the level. (`25`)
 
 ## Graphics
 - **Black screen but no crash.** → Command processor not translating draws, or no
@@ -321,6 +337,25 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 ## Audio / input / saves
 - **No/garbled audio.** → XMA not decoded or wrong sample-rate/channel/endian. →
   Route through the XMA decoder; fix conversion. (`75`)
+- **Audio fidelity needs a HUMAN ear — but first prove the path objectively + capture a clip.**
+  An agent can't hear, but it can settle everything *except* timbre: (1) read the conversion and
+  confirm it's a correct 5.1→stereo fold (center −6 dB to L/R, surrounds summed, LFE dropped,
+  normalized; BE→LE swap; channel order = XAudio2 FL,FR,FC,LFE,BL,BR); (2) add a **cvar-gated PCM
+  dump** at the point you hand samples to the host audio API (e.g. just before
+  `SDL_PutAudioStreamData`) → raw F32LE → `ffmpeg -f f32le -ar <hz> -ac <ch> -i dump.raw
+  out.flac` (FLAC = lossless, doesn't taint the fidelity judgment); (3) check **peak (clipping)**
+  and that the **non-silence duration ≈ wall-clock** (real-time). Hand the FLAC to a human on a
+  real device for sign-off; never claim audio "fixed" yourself. (`75`)
+- **A headless/remote box drains the audio stream FASTER than real-time (e.g. exactly 3×),
+  padding your capture with silence — it's a CAPTURE-ENVIRONMENT artifact, not a port bug.**
+  If the audio endpoint doesn't *pace* playback (a virtual/non-rendering sink — common over
+  RustDesk/RDP or with virtual mixers), SDL's "needs more data" callback fires faster than
+  real-time and your dump fills with the "queue empty → memset 0" silence branch (here: 70 %
+  exact-zero frames, 3× the bytes). The **real samples are still correct and real-time** — strip
+  the exact-zero frames to recover a clean clip (`max==0` per frame). On a normal output device
+  SDL blocks at real-time and this doesn't happen, so **don't file it as an audio-speed bug**;
+  confirm on real hardware (the human doing the ear check). Tell: dump byte-rate is an integer
+  multiple of `hz·ch·4`, and stripping silence yields ≈ wall-clock duration. (`75`)
 - **Controller does nothing.** → XInput not bridged. → Map XInput → host
   controller; provide keyboard fallback. (`75`)
 - **Can't verify input from automation (synthetic keys don't register).** → `keybd_event`/
@@ -403,6 +438,14 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   throttle; "frozen + intermittent across runs" is a pacing bug, not host state.** Diagnose
   with `cdb -p <pid> -c "~*k; qd"` and a spin counter on the poll loop; `--vsync=false` is a
   useful probe but the durable fix is the spin-yield. (`60`, `70`)
+- **"Boot takes minutes" — measure before optimizing; it's often one-time COLD shader-cache
+  translation, not a runtime stall.** Pin boot-to-title with **timed screenshots**, and check the
+  GPU busy-wait health (e.g. a `WAIT_REG_MEM` stuck-counter = 0 → fences resolve fine). If the
+  log says shaders/pipelines loaded **"from the storage"** (warm cache) and boot is now ~1 min,
+  the earlier multi-minute figure was a **cold first boot** (live translation of the whole shader
+  set) — inherent and cached afterward — not a bug. The residual time is usually **game-paced
+  splash/intro animation** (user-skippable), which the runtime can't speed up. Don't "optimize"
+  a fence loop that isn't the bottleneck. (`60`, `75`)
 
 ## Process / hygiene
 - **A re-codegen wiped your edits.** → You hand-edited **generated** files. → Move
