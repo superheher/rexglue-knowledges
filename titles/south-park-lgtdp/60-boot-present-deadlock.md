@@ -131,3 +131,24 @@ Traced the SDK interrupt machinery end-to-end against the live dump:
 on something that itself needs the interrupt/CP (break the CP↔interrupt cyclic dependency) so the EOP
 fence advances. The recompiled **artifact is correct** (same build ran `boot→match→win` earlier the
 same session); this is a runtime GPU-sync ordering bug that turned deterministic on this host.
+
+## Update 4 — the guest fence is a producer/consumer EOP counter; forcing it cascades
+Instrumented the guest fence wait (`sub_821C6E58`): the guest polls a GPU EOP/progress counter at
+`*[obj+10896]` (`0xFFC9B000`, same page as the CP's `WAIT_REG_MEM` poll `0x1FC9B006`) and waits for
+it to reach a target (e.g. `val 0x11 → tgt 0x17`). Without help it dead-stalls at the **first** such
+wait — the CP, mid command-batch, hits a `WAIT_REG_MEM` waiting for a value the guest only writes
+*after* passing this wait → mutual (bootstrap) deadlock.
+- **Forcing the fence (write `tgt` into `*[obj+10896]` to simulate GPU completion) advances the
+  guest through 5 sync points** (`val 0x11→0x25`, `tgt 0x17→0x2F`) — proving the boot **can** make
+  forward progress when the fence is satisfied. But after ~5 it **cascades to a different stall**:
+  the guest stops calling `sub_821C6E58` (no more fence waits) **and** the CP-side `WAIT_REG_MEM`
+  escape never trips either — so the next wait is **a third mechanism** (likely a `Ke*` event wait),
+  not coverable by forcing these two points.
+- ⇒ **The code-hack path is whack-a-mole** (each forced sync reveals a new, different wait) and
+  would corrupt rendering anyway (lying about GPU completion). It does **not** reach a clean — let
+  alone *playable* — boot. The legitimate fix is the SDK's CP↔guest GPU-sync/interrupt-write-back
+  (the upstream `MarkVblank` TODO), a substantial, hard-to-verify-while-blocked change. The
+  recompiled artifact remains correct (booted to a win earlier the same session); the host's
+  accumulated scheduler/runtime state after ~250 launches is what flips this bootstrap race to lose,
+  and only a reboot (or that SDK fix) resets it. All boot-fix instrumentation has been reverted to
+  clean codegen.
