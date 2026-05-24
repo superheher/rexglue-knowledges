@@ -128,3 +128,31 @@ that is one-time shader translation, not a bug.)
 Left **stubbed offline** (the XAM party/session/live imports resolve to stubs; the title runs
 as a single offline user with one storage device). v1 is the **offline single-player** loop.
 Not pursued.
+
+---
+
+## 6. Window UX — ✅ cursor freed, window icon, blocky boot logo skipped (maintainer-requested)
+
+All three are SDK/DLL-level (no exe rebuild), cvar-gated, verified by running.
+
+- **Cursor was captured/locked to the window.** The mnk driver's `UpdateMouseCapture` hid the
+  cursor + `CaptureMouse()` + re-centered it every frame (for mouse-look) whenever mnk was enabled
+  and the window focused → the cursor couldn't leave the window, making it impossible to move/resize.
+  Fix: **`mnk_mouse_look` cvar, default OFF** — `should_capture` is gated on it, so the cursor stays
+  free + visible. Mouse **buttons still map to triggers** (read from key state, independent of
+  capture); only mouse-movement→right-stick is lost (opt back in with `--mnk_mouse_look=1`).
+- **No window/taskbar icon** (`LoadIconW(hinstance,"MAINICON")` is null — the exe has no icon
+  resource). Fix: **`window_icon` cvar** = path to a `.ico`; `window_win.cpp` loads it via
+  `LoadImageW(LR_LOADFROMFILE)` and sets it for `ICON_BIG`/`ICON_SMALL` + the window class. The 64×64
+  `SouthPark.png` → a multi-size `SouthPark.ico` (16/32/48/64, made with Pillow); launcher passes
+  `--window_icon`.
+- **The first boot image (Xbox Live Arcade logo) is blocky** — it's `media/ArcadeLogo.ptc`, a
+  `PTC+MSHM` multi-frame container whose frames are **JPEG-compressed** (found `FF D8 FF` streams
+  inside), so the full-screen splash shows 8×8 DCT block + ringing artifacts; the rest of the UI is
+  lossless PNG/TGA → crisp. It's the **source asset**, not a decode bug (the runtime decodes the JPEG
+  faithfully — same JPEG path as the boot fix). The artifacts are baked into the lossy data; can't be
+  un-compressed. Maintainer preferred to hide it → **`skip_arcade_logo` cvar**: `NtCreateFile` reports
+  `ArcadeLogo.ptc` not-found, so the game skips it and boots straight to the (crisp) Microsoft Game
+  Studios splash. Verified: logo gone, **no stall** on the missing asset, boot reaches the title.
+  (Lesson: a "first image blocky, everything after crisp" split usually = that one asset is lossily
+  compressed in the source; check its magic bytes — JPEG/DXT — before suspecting the decoder.)
