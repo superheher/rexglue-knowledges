@@ -501,3 +501,17 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   other fixes, **re-verify** — an unrelated fix may have resolved it (here the GPU page-validity fix,
   doc 65, had repaired the decoded-movie texture upload). Also: "no API imported" ≠ "no decoder" — a
   title can ship its own codec compiled into the XEX. (south-park-lgtdp `70`, `67` §4)
+
+- **A POLLUTED build dir can yield a DLL with a subtle RUNTIME regression even when the sources are
+  correct — "it compiled" ≠ "it's correct".** After heavy CMake reconfigure churn (a bare
+  `cmake <dir>` reconfigure that dropped the preset's `-march`/implicit-libs, flag flips via `-D`, an
+  added-then-reverted experiment), an incremental rebuild of South Park's runtime produced a DLL that
+  was ~+10MB and **reintroduced the in-match font-glyph striping** (the doc-65 corruption) — purely a
+  build artifact (the font-fix sources were intact). That fix is a **timing-sensitive GPU race fix**,
+  so the polluted build's shifted code layout/timing made the race resurface. Symptoms like this won't
+  show in the compile/link — only at runtime. **Fixes/practices:** (1) after reconfigure churn, do a
+  **clean rebuild** (move the build dir aside, `cmake --preset …`, rebuild) rather than trusting an
+  incremental one; (2) **keep a known-good DLL** to restore instantly (here an early correct build
+  still sat in `out/install/.../bin/`); (3) **verify by RUNNING** the actual screens, not just that it
+  built; (4) prefer `cmake --preset` over a bare `cmake <dir>` reconfigure (the bare form silently
+  loses preset cache vars). (south-park-lgtdp `65`, `70`)
