@@ -93,6 +93,45 @@ that is the missing/broken piece (fix target b). Trace the CAMPAIGN-mode-select 
 copy the loaded `0x828E3A38` cache (or re-read the profile) into the g_slots slot's progress fields;
 if it doesn't (or a mis-translated fn), the slot stays default → level-select resets.
 
+## PRECISE mechanism (deepest trace) + the exact fix candidates
+- `sub_8229C8D0(key=XUID)` (load mgr) loads the `0x63E83FF*` blobs into the per-user cache slot
+  (`0x828E3A38`, found by `sub_8229CA28`) and **returns that slot** (ends `mr r3,r29; return`).
+- It has **9 callers** that consume the loaded slot (named):
+  `sub_82103980` (recomp.0:8907), `sub_821046A0` (0:10871), `sub_821049C0` (0:11346),
+  `sub_82154B08` (recomp.2:48640), `sub_82160EF0` (2:77688), `sub_821648F8` (recomp.3:8084),
+  `sub_82167890` (3:14734), `sub_82168748` (3:16901), `sub_82169D88` (3:20168). The CAMPAIGN-entry
+  apply is one of these (the recomp.3 `sub_8216*` cluster is the likely UI/campaign area). For each,
+  check: does it write g_slots (`0x828EB348`) from the returned `r3` slot? The one that *should* but
+  doesn't (or is mis-translated) is the fix site.
+- The **level-select unlock reads g_slots** (`0x828EB348`), NOT the returned cache slot — proven:
+  the extended guard preserved ALL 3 disk blobs across restart (`FFE=2`,`FFF=22` non-zero) yet the
+  level-select still showed only Stan's House. So the **loaded `0x828E3A38` slot is never copied
+  into the g_slots progress fields**; g_slots is re-init'd to default on LOCAL-GAME entry.
+- **XUID is a stable constant** (`0xB13EBABEBABEBABE`, user_profile.cpp), so it is NOT a key
+  mismatch — the load and any apply hit the same cache slot.
+- ⇒ **The fix:** one of the 9 `sub_8229C8D0` callers (the CAMPAIGN-entry path, most likely in the
+  menu/campaign code = recomp.2/.3 sites) must copy the returned slot's loaded progress into the
+  g_slots session-player slot's progress fields — that copy is missing or mis-translated. Examine
+  those 9 callers (what they do with the returned `r3` slot; which writes g_slots `0x828EB348`),
+  find the CAMPAIGN-entry one, and restore the copy via a config function-override / fixup.
+  **Fastest localize:** instrument the generated `sub_8229C8D0` (log each call + caller LR + whether
+  the returned slot holds progress) and run boot→CAMPAIGN→level-select; the call on CAMPAIGN entry
+  whose result is dropped is the bug site. (App rebuild needed for generated-code instrumentation.)
+
+## Final model (this session's deepest finding)
+`sub_821648F8` (one of the 4 g_slots-region candidates) is an **on-demand QUERY**, not a copy: it
+`sub_8229C8D0`-loads the user's campaign blob, then returns a single field (`[slot+20]`, gated by
+`[slot+68]==0`) to its caller's output — it does NOT write g_slots. So the loaded profile data is
+**queryable on demand** (the game CAN read saved progress via these helpers), yet the **level-select
+reads g_slots (`0x828EB348`) directly**, and g_slots is only ever populated by the **in-session
+level-complete logic**, never from the profile on a fresh boot. ⇒ The true gap is **"g_slots is not
+seeded from the saved profile on sign-in / CAMPAIGN entry"** (or the level-select should use the
+on-demand query but uses g_slots). Remaining candidates to check for a g_slots *write* from the
+load: `sub_821046A0`, `sub_82167890`, `sub_82169D88` (the other 3 that touch the g_slots region).
+If none writes g_slots, the fix is to add the seed (config function-override that, on CAMPAIGN
+entry, copies the on-demand-queried progress into g_slots) — guest-side, app rebuild + play/restart
+verify. **This is multi-session; the mechanism + candidates are now fully pinned for resumption.**
+
 ## How to make progress (concrete)
 - **Instrument the save-slot global:** log reads/writes of `0x828E3A38` region (or the
   `sub_8229CA28` return) with the key, at boot vs at the level-select, to see if the same slot is
