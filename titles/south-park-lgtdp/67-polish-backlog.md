@@ -103,23 +103,28 @@ that is one-time shader translation, not a bug.)
 
 ---
 
-## 4. Intro / cutscene movies (WMV) — black & silent — DOCUMENTED LIMITATION (won't-fix for v1)
+## 4. Intro / cutscene movies (WMV) — ✅ ACTUALLY WORK (the "black & silent" note was outdated)
 
-- **Format (ffprobe):** `sp_xbox_0_intro.wmv` and the `LevelN{Intro,Mid,End}.wmv` cutscenes are
-  **WMV3 (Windows Media Video 9 / VC-1) video, 1280×720 + WMA2 (Windows Media Audio 2) audio,
-  44.1 kHz stereo, ASF container, ~22 s** for the boot intro.
-- **The runtime has no WMV3/VC-1 video or WMA2 audio decoder** (audio is XMA-only). The files
-  **open** (so the movie path doesn't stall — the locale fallback in §1 also covers
-  `Movies\en-en\`), but they **cannot be decoded**, so movies render **black** and play
-  **silent**.
-- **Mitigation in place:** they are **user-skippable** ("Ⓐ SKIP"; input is wired). The boot
-  itself does not block on the intro (the visible boot "intro" is an *in-engine* animation, not
-  the WMV; no movie activity appears in the boot log).
-- **Why not fix now:** adding a VC-1 + WMA2 decoder (and a video-frame upload path) to the
-  runtime is a large feature, well beyond v1 polish, and affects only non-interactive
-  cutscenes. **Documented as a known limitation.** If pursued later: decode with a bundled VC-1
-  decoder (e.g. via FFmpeg/libavcodec) into a guest/host texture on the movie-playback API the
-  title uses, + WMA2 for the audio track.
+**CORRECTION (2026-05-24, verified by running; full detail: doc `70-video-playback.md`).** The
+movies are **NOT black & silent** in the current build — the title's **own in-software WMV3 (VC-1)
+video + WMA2 audio decoders render them** (video *and* audio). This earlier "no decoder → black"
+note was an **assumption that was never screenshot-verified**.
+
+- **Format (ffprobe):** `sp_xbox_0_intro.wmv` + `LevelN{Intro,Mid,End}.wmv` = WMV3 (VC-1) video,
+  1280×720, 24 fps + WMA2 audio, 44.1 kHz stereo, ASF, ~22 s. (Same format ⇒ same code path.)
+- **What's true:** the title imports **no** system video API; it **decodes the .wmv in-guest**
+  (reads the whole file in one `NtReadFile`, decodes from memory; the movie is a per-frame **scene
+  node**). Verified by running: the intro plays **animating video + audio** then completes/advances;
+  removing the `.wmv` → the scene goes **black** (so the *game* decodes it); an audio capture shows a
+  ~26 s music segment matching the WMV's audio track.
+- **Why it was black before (best theory):** the GPU shared-memory **page-validity bug (doc 65)** —
+  fixed this same day — corrupted/blocked the decoded movie frame's texture upload; the in-software
+  decoders were always present. Once doc 65 landed, the movie video appears.
+- **Mitigation still in place:** user-skippable ("Ⓐ SKIP", the game's own prompt); boot doesn't
+  block on it.
+- **Don't add a host decoder:** a full cross-platform libavcodec VC-1/WMV3 + WMA2 path was built +
+  proven during the investigation, then **reverted** (maintainer scope decision) because the guest
+  already plays the movies. Recipe to restore it is in doc 70 §4 if the guest path ever regresses.
 
 ---
 

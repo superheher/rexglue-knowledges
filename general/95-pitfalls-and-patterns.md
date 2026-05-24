@@ -487,3 +487,17 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   (keep defense health > 0) rather than dressing up its aftermath. To make a real failure
   reproducible on demand, drive the *engine's own* state (here: `SetDefenseHealth(0)` to force a
   genuine `DefenseKilled`, and an incremental drain to stress-test the keep-alive). (`66`)
+
+- **Verify the PREMISE by running BEFORE building a fix — don't trust a derived "it's broken" claim.**
+  South Park's intro/cutscene `.wmv` movies were documented (and re-stated in a task goal) as
+  "black & silent — no WMV3/WMA2 decoder, so they can't play". That was an **inference** ("no decode
+  API imported → black"), never checked against the screen. In reality the title **statically links
+  its own in-software WMV3+WMA2 decoders** (not a stubbed kernel API), so it decodes the movies
+  itself — they already play **video + audio**. A large vendored-FFmpeg VC-1/WMV3 + libavformat build
+  and a host overlay were written before the first mid-movie screenshot was taken; all of it was
+  then reverted as unnecessary. Two cheap checks would have caught it in minutes: (1) **screenshot
+  mid-movie** (it showed animating footage, not black); (2) **rename the asset aside** (the scene
+  went black → the *game* is what decodes the file). Corollary: when a doc says "broken" but predates
+  other fixes, **re-verify** — an unrelated fix may have resolved it (here the GPU page-validity fix,
+  doc 65, had repaired the decoded-movie texture upload). Also: "no API imported" ≠ "no decoder" — a
+  title can ship its own codec compiled into the XEX. (south-park-lgtdp `70`, `67` §4)
