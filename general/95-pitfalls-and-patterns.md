@@ -320,24 +320,41 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
 - **Saves don't persist across runs.** → Content APIs not backed by a stable host
   dir, or serialization endianness. → Back `xam` content with a fixed save dir;
   verify BE serialization. (`75`)
-- **Save never fires even though the save code is all there.** → Console saves are
-  often **async + request-queued state machines**, not synchronous writes: a
-  per-frame "flush if dirty" pumps a queue only when the game **enqueues a
-  request** / sets a dirty flag. You can watch the flush fire thousands of times
-  with the dirty flag always 0 — that's the *pump*, not the trigger. → Trace to the
-  **enqueue** (who marks dirty / posts the request); don't "force" the dirty gate
-  (that pumps an empty queue). Leave the `XamContent*` endpoint logged so a real
-  playthrough self-reports the save. (`75`)
-- **Boot hangs at the first frame present (no input ever polled).** → A
-  **present/vsync deadlock**: the swap path (`XE_SWAP → IssueSwap →
-  RefreshGuestOutput`) blocks on a vsync wait while a presenter/UI thread spins on a
-  disruptor `wait_until_published` — and/or a `WAIT_REG_MEM` GPU fence the guest
-  never clears. Timing-sensitive; can become ~100% after many D3D12 device
-  create/destroy cycles (degraded driver/DWM vsync). → Diagnose with `cdb -p <pid>
-  -c "~*k; qd"`; probe with `--vsync=false` (clears the present wait, exposes the
-  next fence). Real fix: give the swap vsync-wait + the disruptor claim a
-  **timeout/yield escape**, and add **runtime GPU-fence write-back** so
-  `WAIT_REG_MEM` targets resolve. Reboot restores degraded driver state fast. (`70`)
+- **Save never fires / nothing ever persists, even though the save code is all there.**
+  → **CHECK TRIAL MODE FIRST.** An XBLA title queries its license via
+  **`XamContentGetLicenseMask`**, which returns the runtime's **`license_mask` cvar
+  (default 0 = trial)**. In trial it shows "UNLOCK FULL GAME" / "you can keep this once you
+  unlock the full game" and **deliberately persists nothing** — so you can chase the
+  save-enqueue forever and never see a byte written. **Fix: launch with `--license_mask=1`**
+  (the owned-game unlock; same cvar Xenia uses). On South Park: LGTDP this flipped the menu
+  to full and made profile/settings writes hit disk immediately (a SETTINGS→ACCEPT rewrote
+  `userdata/<titleid>/profile/User/63E83FF*` on the spot; trial wrote nothing). Tell: the
+  menu's first item is "UNLOCK FULL GAME". → **Only after confirming full mode** chase the
+  async machinery: console saves are often **async + request-queued state machines**, not
+  synchronous writes — a per-frame "flush if dirty" pumps a queue only when the game
+  **enqueues a request** / sets a dirty flag (you'll see the flush fire thousands of times
+  with the flag always 0 — that's the *pump*, not the trigger). Trace to the **enqueue**;
+  don't "force" the dirty gate (it pumps an empty queue). Note there are usually **two**
+  paths: `XamUserWriteProfileSettings` (profile/settings, fires readily in full mode) and
+  `XamContentCreateEx` (a content save-game, needs the in-game progress trigger). Leave both
+  endpoints logged so a real playthrough self-reports. (`75`)
+- **Boot freezes at the first frame (renders the intro, then frozen; 0 input polled;
+  log stuck ~4 KB). LOOKS host-state/"reboot-only" — it is NOT.** This *presents* as a
+  present/vsync deadlock that's intermittent across runs (so you're tempted to blame
+  degraded driver/DWM state and reboot). On South Park: LGTDP that conclusion was **wrong**
+  after ~20 ruled-out hypotheses. → **Real cause: the command processor's `WAIT_REG_MEM`
+  poll loop slept a fixed `1 ms` per *unmatched* poll** (under vsync). When a fence needs
+  many polls to clear, the CP crawls, falls behind the guest's frame pacing, and the guest's
+  post-frame fence wait never sees catch-up → frozen at frame 1. It looks "intermittent /
+  host-dependent" only because system load changes the poll count. (A second throttle:
+  **per-poll logging** — thousands of log lines/sec — adds I/O that slows the CP further.)
+  → **Fix: in the not-matched path, spin-yield (`SyncMemory` + `MaybeYield`) for the first
+  ~8000 polls before falling back to any sleep**, and raise the stuck-detector log threshold
+  far up so it isn't spamming. **No reboot, no driver issue** — verified booting straight to
+  the title after the change. **Lesson: a fixed per-poll `Sleep` in a GPU busy-wait is a
+  throttle; "frozen + intermittent across runs" is a pacing bug, not host state.** Diagnose
+  with `cdb -p <pid> -c "~*k; qd"` and a spin counter on the poll loop; `--vsync=false` is a
+  useful probe but the durable fix is the spin-yield. (`60`, `70`)
 
 ## Process / hygiene
 - **A re-codegen wiped your edits.** → You hand-edited **generated** files. → Move
