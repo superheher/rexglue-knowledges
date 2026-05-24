@@ -6,6 +6,44 @@ it just never *requests* a save in any flow that can be driven blind (tutorial w
 continue, options, exit-to-menu). The save is request-queued + async, and the request is
 only enqueued by a game progress/settings event that blind navigation doesn't reach.**
 
+> ## ✅ UPDATE 2026-05-24 — ROOT CAUSE WAS **TRIAL MODE**, and the save now WRITES TO DISK (verified)
+> The "never requests a save" framing below was only half the story. The deciding factor is
+> the **license**: the title was running as a **TRIAL** because `XamContentGetLicenseMask`
+> returns the runtime cvar **`license_mask` (default 0)**. In trial mode the game shows
+> "UNLOCK FULL GAME" / "you can keep this achievement once you unlock the full game" and
+> **deliberately persists nothing** — that is why *zero* bytes were ever written, no matter
+> which flow was driven.
+>
+> **Fix (no rebuild): launch with `--license_mask=1`** (this title's full-game license; the
+> standard owned-game unlock, same cvar Xenia uses). Then, **verified live**:
+> - the main menu drops "UNLOCK FULL GAME" (now starts at LOCAL GAME) → full version;
+> - the game **writes profile settings to disk** at sign-in: `userdata/<titleid>/profile/User/
+>   63E83FFD`,`63E83FFE`,`63E83FFF` (1000 B each), via **`XamUserWriteProfileSettings`**
+>   (the recomp.27 site), NOT the `XamContentCreateEx` content path below;
+> - changing a value in **HELP & OPTIONS → SETTINGS → ACCEPT rewrites those 3 files
+>   immediately** (mtime jumps to now). In trial the same ACCEPT wrote nothing.
+>
+> So the save **path works end-to-end in full mode**; the trial license was the gate. Lesson
+> promoted to general/95 ("a recompiled XBLA title that won't persist is often running as a
+> TRIAL — check `XamContentGetLicenseMask`/`license_mask` before chasing the save-enqueue").
+>
+> ### Where campaign progress actually lives (corrects the chain below)
+> The `XamContentCreateEx` content-save chain analyzed below **never fires** even in full mode
+> (0 `XamContent*` calls in a full playthrough; no content save-game dir is created). Instead,
+> **this title stores its campaign progress in the title-specific PROFILE settings**
+> (`XamUserWriteProfileSettings` → the binary blobs `0x63E83FFD/E/F`). Verified live in full
+> mode: completing **Stan's House** (waves 1-4) **unlocked the next level (Elementary School)**
+> in the level-select, and the profile files were **rewritten on disk during/after the level**
+> (mtimes jumped 09:57 → 10:10 → 10:22 as progress advanced). So the `sub_82129730`/
+> `XamContentCreateEx` machinery documented below is **not** this game's progress path — it's
+> a secondary/unused one. The lever for "does progress save" here is simply **full license +
+> the profile-settings write path** (both working). Continue (load-back on restart) uses the
+> runtime's `UserProfile::LoadSetting` (reads `profile/User/<id>`, `BinarySetting::Deserialize`
+> sets `is_set=true`, and `XamUserReadProfileSettingsEx` returns it) — that path is correct in
+> the runtime. **Caveat:** the in-game *audio/subtitle* SETTINGS did not visibly restore on
+> restart (they may live in an unfired content save, or the game re-defaults them), but
+> **campaign level unlocks are the meaningful progress and they write to the profile blobs.**
+
 ## The chain (endpoint → trigger), all source-verified in the codegen
 | Function | Role |
 |---|---|
