@@ -1,8 +1,56 @@
 # Rendering defect — some font glyphs render as striped/garbled boxes (2026-05-24)
 
-**Status: ✅ SOLVED 2026-05-24 — fixed + verified by running (clean A/B).** It was NOT a
-tile-mode/pitch/format bug — it was a **cross-thread data race in the GPU shared-memory page-validity
-tracking**. See the SOLUTION section below; the original symptom notes follow it.
+**Status: ✅ FULLY SOLVED 2026-05-24 (after a wrong first cut) — verified by running on real
+hardware.** It was NOT a tile-mode/pitch/format/decode bug — it is a **stale page-valid state in the
+GPU shared-memory upload-skip optimization**. The FIRST fix (lock the valid-flag swap, below) was
+**insufficient** — corruption kept recurring intermittently. The complete resolution is in the
+"FULL RESOLUTION" section immediately below; the original (partial) SOLUTION + symptom notes follow.
+
+## ✅ FULL RESOLUTION (2026-05-24, supersedes the first SOLUTION below)
+
+**The first fix was incomplete.** Locking the buffer swap (and later the fast-path read) reduced but
+did **not** eliminate the corruption. A maintainer with the build on two PCs showed it was
+**intermittent and per-visit**: different text striped each time (results TOTAL clean one visit,
+SCORE/BONUS lines striped the next; menu difficulty NORMAL/HARD; the in-match hint banner) and **clean
+on one machine, striped on another** — the signature of a **timing race**, not a deterministic decode
+bug. **Decisive experiment:** running with `clear_memory_page_state=false` (which forces all texture
+re-uploads, disabling the skip) rendered **every** screen clean — proving the bug is the *skip*, i.e.
+stale page-valid state, not tiling/format.
+
+**Root cause (confirmed by upstream rexglue-sdk issue #341, "cvar clear_memory_page_state doesn't work
+as expected"):** `SharedMemory::SetSystemPageBlocksValidWithGpuDataWritten()` rebuilt the `staging`
+valid-flag buffer with an **incremental per-dirty-block copy**, but `staging` is the buffer retired two
+swaps ago, so its **non-dirty blocks still held stale valid bits**; copying only the dirty blocks left
+those stale "valid" flags in the new active buffer → pages that should be invalid read as valid →
+`RequestRanges` skips their re-upload → the GPU samples stale bytes. On NG2 (the #341 report) this lost
+GPU-written validity → missing character geometry; on South Park LGTDP it left per-frame
+CPU-rasterized **dynamic glyph** pages wrongly valid → striped text.
+
+**The fix (3 parts, all in `patches/rexglue-sdk-current-full.patch`):**
+1. **`SetSystemPageBlocksValidWithGpuDataWritten` — apply the #341 root-cause fix:** always rebuild
+   `staging` as a **FULL** snapshot of the master flags (full `memcpy`) instead of the incremental
+   copy. (The upstream issue forces `dirty_mask = UINT32_MAX`; we `memcpy` the whole buffer.)
+2. **`RequestRanges` fast-path read under the global lock** (serializes every access to the valid-flag
+   buffer contents — removes the lock-free read data race).
+3. **`clear_memory_page_state` default OFF** (`command_processor.cpp`). Even with (1)+(2), the
+   optimization still intermittently keeps *this title's* per-frame same-address glyph pages marked
+   valid → stale skip → striping. Forcing re-upload (OFF) is the **only config that renders everything
+   clean**, and it is the shipped default for this title. (1)+(2) keep the ON path correct for other
+   titles. The cvar's "may break memory coherency" warning **did not manifest** here (a full match +
+   results render correctly).
+
+**Verified by running (default settings = optimization OFF):** the difficulty NORMAL/HARD labels, the
+in-match control-hint banner, and the results SCORE/BONUS/TOTAL all render clean.
+
+**Lesson (promoted to general/95):** for intermittent, per-visit, machine-dependent texture/text
+corruption, suspect a **stale upload-skip / page-valid race**, and classify it cheaply by **forcing
+all uploads** (here `clear_memory_page_state=false`) — if that's clean, it's a skip/staleness bug, not
+a decoder. A *partial* lock fix that "reduces but doesn't kill" intermittent corruption is a sign the
+underlying *data* (not just access ordering) is wrong — here the staging buffer's incremental rebuild.
+
+---
+
+### (First SOLUTION below was PARTIAL — kept for history)
 
 ## ✅ SOLUTION (2026-05-24)
 

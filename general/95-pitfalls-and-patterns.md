@@ -333,6 +333,19 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   always clean). Fix = take the global critical region around the swap. **Confirm cheaply** by
   forcing all uploads (e.g. disable the "mark valid after GPU write" optimization via its cvar) — if
   the corruption vanishes, it's the page-state bookkeeping, not the decoder. (`75`)
+  - **FOLLOW-UP (the partial-fix trap):** on South Park: LGTDP, locking that swap **reduced but did
+    not kill** the corruption — it kept recurring **intermittently, on different text each visit, and
+    differed between machines** (clean on one PC, striped on another). That pattern = a **timing
+    race**, and a lock that only *narrows* it means the **data in the buffer is wrong**, not just the
+    access ordering. The real root cause (upstream rexglue-sdk **issue #341**) was the valid-flag
+    `staging` buffer being rebuilt with an **incremental per-dirty-block copy**: `staging` is the
+    buffer retired two swaps ago, so its **non-dirty blocks keep stale "valid" bits** → wrongly-valid
+    pages → skipped re-upload → stale bytes. Fix = rebuild `staging` as a **FULL** snapshot every
+    frame. **And** when the title re-rasterizes glyphs to the **same guest address every frame**, the
+    skip optimization can *still* mark them valid-then-stale, so the reliable cure is to **default the
+    optimization OFF** (force re-upload) for that title — proven clean across all screens, while the
+    full-copy + read-lock keep the ON path correct for other titles. **Use the forced-upload toggle as
+    the classifier first; don't trust a lock that only makes intermittent corruption rarer.** (`75`)
 
 ## Audio / input / saves
 - **No/garbled audio.** → XMA not decoded or wrong sample-rate/channel/endian. →
