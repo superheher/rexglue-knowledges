@@ -109,3 +109,25 @@ guest fence-wait loop in `sub_821BFF48` (not `sub_821C6E58`) as a stop-gap.
   after the first frame's GPU work, so the guest's post-init fence wait completes. Bounding the
   guest wait is risky (the loop level is ambiguous across `sub_82150970`/`sub_82249xxx`, and
   proceeding before the GPU is done corrupts state).
+
+## Update 3 — mechanistic root cause (interrupt/fence path is alive; the CP is the stall)
+Traced the SDK interrupt machinery end-to-end against the live dump:
+- The **GPU VSync timer thread** (`graphics_system.cpp:156` lambda) is **alive and looping** (caught
+  in its `Sleep(1ms)`), so `MarkVblank()` fires every refresh interval →
+  `command_processor_->increment_counter()` (**vblank counter advances**) +
+  `DispatchInterruptCallback(0,2)` runs the guest interrupt callback (`821C7170`) **on the vsync
+  thread**, and it **returns** (no thread stuck in `ExecuteInterrupt`/`821C7170`). **Vblank interrupt
+  delivery works.**
+- So the guest's stuck fence (`sub_821BFF48`→`sub_821C6E58`, polling `*[obj+10896]`) is **not the
+  vblank counter** — it's an **EOP/ring fence** advanced by the CP as it consumes the ring and fires
+  the EOP interrupt (`DispatchInterruptCallback(1, n)`, `command_processor.cpp:1060`). The CP is
+  stuck **inside the first `XE_SWAP`** (`IssueSwap → RefreshGuestOutput → RefreshGuestOutputImpl`)
+  and **never reaches the EOP** → ring/EOP fence never advances → guest post-init wait hangs.
+- The SDK author's **own TODO at `MarkVblank` (graphics_system.cpp:337-339)** flags exactly this:
+  *"…there's something wrong and the CP will block waiting for code that needs to be run in the
+  interrupt."* A **known-fragile CP↔interrupt ordering**; the first `XE_SWAP` is where it bites here.
+
+**Durable fix (SDK):** make the first `XE_SWAP`'s `RefreshGuestOutputImpl` complete without blocking
+on something that itself needs the interrupt/CP (break the CP↔interrupt cyclic dependency) so the EOP
+fence advances. The recompiled **artifact is correct** (same build ran `boot→match→win` earlier the
+same session); this is a runtime GPU-sync ordering bug that turned deterministic on this host.
