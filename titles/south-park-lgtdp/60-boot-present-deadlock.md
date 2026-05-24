@@ -186,3 +186,22 @@ host OS-scheduler state after ~250 launches flips the race so the guest now wait
 **Implication for a durable fix:** don't pursue more fence write-backs — instead bound the guest's
 fence wait (give it a timeout/yield so it submits more) or ensure the CP drains submissions ahead of
 the guest's wait; and a **reboot** resets the host scheduler state that flips the race today.
+
+## Update 7 — ✅ RESOLVED (code fix, NO reboot): the CP was throttled by a 1 ms sleep per poll
+**The "host-state, reboot-only" conclusion above was WRONG.** Root cause: `ExecutePacketType3_WAIT_REG_MEM`
+slept a full **1 ms on every unmatched poll** under `vsync=true`
+(`rex::thread::Sleep(wait/0x100)` with `wait=0x100`). When a guest CP↔guest fence took many polls
+to resolve, the CP crawled (~ms × polls) and fell far behind the guest's frame pacing, so the guest's
+post-frame fence wait never saw the CP catch up → frozen at the first intro frame. It LOOKED
+host-state-sensitive because tiny timing differences (system load over a long session) changed how
+many polls each fence needed, tipping the CP over the edge.
+**Fix (committed, `south-park-recomp/patches/`):** in the WAIT_REG_MEM not-matched path, **spin-yield
+(`SyncMemory()` + `MaybeYield()`, no sleep) for a budget (~8000 polls) before falling back to
+sleeping** — fast fences resolve in microseconds and the CP keeps step; also raised the
+stuck-detector log threshold so resolving fences stop spamming the log (the log I/O itself was
+throttling the CP). **Result: boot now progresses past the intro to the TITLE SCREEN ("PRESS START",
+screenshot-verified), rendering correct, no reboot.** Boot is slower than ideal (~4 min to title; the
+CP still loops to resolve fences) — a follow-up could tighten the spin or fix the guest's write
+latency — but it BOOTS. **Lesson (promote to general/95): a fixed per-poll `Sleep` in a GPU
+busy-wait throttles the command processor; spin-yield first, sleep only as a fallback. And "frozen +
+intermittent across runs" can be a throttle/pacing bug, not host state — fix the polling, don't reboot.**
