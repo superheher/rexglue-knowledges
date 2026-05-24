@@ -5,9 +5,16 @@ Companion to the per-subsystem deep dives in `titles/south-park-lgtdp/` and `gen
 
 > **v1 STATUS: COMPLETE (per maintainer scope decision 2026-05-24).** v1 = OFFLINE single-player,
 > **playable boot → menu → match → win/lose with rendering, audio, gamepad, save-to-disk, and
-> in-session continue** — all achieved + screenshot-verified. **Cross-restart "continue"** (campaign
-> unlocks persisting after a full relaunch) was scoped **out of v1** by the maintainer and is a
-> documented, root-caused **post-v1 backlog item** (`56-continue-re-map.md`). KB deliverable
+> in-session continue** — all achieved + screenshot-verified.
+> **✅ UPDATE 2026-05-24: CROSS-RESTART CONTINUE NOW WORKS too (post-v1, verified by running).**
+> Win Stan's House → restart → the CAMPAIGN LEVEL SELECT shows Elementary School unlocked. Root
+> cause: campaign progress lives in the in-memory g_slots block `0x828EB348+2480..+2624`; the guest
+> reads `63E83FFE` at boot but never deserializes it into that block, and the game clobbers the disk
+> save. Fixed in the runtime (SDK patch): a 20 ms background thread snapshots the g_slots progress
+> block to a side file on a win, and `XamInputGetState` restores it into g_slots each frame so the
+> level grid is rebuilt with the saved unlocks. Format-agnostic + monotonic; the decisive RE was a
+> live ReadProcessMemory before/after diff across an in-session unlock. Full analysis +
+> verification: `56-continue-re-map.md` (SOLUTION). KB deliverable
 > complete (this report + per-subsystem docs + promoted general lessons + templates).
 
 ## Outcome (honest) — updated 2026-05-24

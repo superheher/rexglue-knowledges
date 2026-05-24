@@ -332,6 +332,26 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   mode-entry path) + a config override / post-codegen fixup. ⚠️ And **before any of this, rule out
   TRIAL mode** (`XamContentGetLicenseMask` → `license_mask` cvar, default 0 = trial persists
   nothing; launch `--license_mask=1` for an owned copy). (`75`)
+- **…and you CAN still fix it from the runtime — snapshot/restore the in-memory progress global
+  directly (don't fight the disk).** Follow-up to the above: on South Park: LGTDP the "guest-side
+  only" verdict was too pessimistic. The real win was finding **which in-memory global the level
+  grid is actually built from**, then having the runtime persist/restore *that* — sidestepping both
+  the broken guest load AND the game clobbering its own disk save. How to find it: **live
+  ReadProcessMemory before/after diff across the in-session event** (e.g. winning a level): dump a
+  wide region of guest memory (guest addr → host `0x100000000 + addr`, since guest space is mapped at
+  host 4 GB), trigger the unlock, dump again, `diff`. The changed bytes ARE the progress state — far
+  more reliable than static analysis (which gave ~6 wrong "final models" here). Gotchas that made the
+  diff lie at first: (a) the progress global is **transient** (populated only around the win/save,
+  reads 0 at the menu — so diff at the *right* screen, and the runtime must restore it *every frame*
+  before the screen rebuilds its UI from it); (b) it's in a **per-(player)slot** block that also
+  holds per-boot **heap pointers** — restore only the pointer-free int/flag sub-range, gated by a
+  monotonic "progress" counter so you never reduce progress or copy a stale pointer. Implementation:
+  a ~20 ms background thread captures the block to a side file when the counter grows (catches the
+  transient win window; the game's own profile-write is useless because it writes DEFAULT), and the
+  per-frame input hook restores it when the live block reads default. Verified end-to-end (win →
+  restart → next level unlocked). **Lesson: "the game ignores its own save" does NOT mean
+  unfixable-without-guest-RE — locate the in-memory state the display reads (live RPM diff) and
+  snapshot/restore THAT from the runtime.** (`70`, `75`)
 - **Save never fires / nothing ever persists, even though the save code is all there.**
   → **CHECK TRIAL MODE FIRST.** An XBLA title queries its license via
   **`XamContentGetLicenseMask`**, which returns the runtime's **`license_mask` cvar

@@ -1,8 +1,68 @@
 # Continue (cross-restart save) — reverse-engineering map (2026-05-24)
 
+> **Status: ✅ SOLVED 2026-05-24 — cross-restart continue WORKS, verified by running.** Win Stan's
+> House → restart → the CAMPAIGN LEVEL SELECT shows Elementary School UNLOCKED (screenshots
+> `C:\Temp\b6_levelselect2.png`, `b11_FINAL.png`). A/B proven (no side file → still locked,
+> `b7_levelselect2.png`). Fix is a runtime g_slots snapshot/restore; details in the SOLUTION
+> section directly below. The original RE map (mostly superseded/corrected) follows it.
+
+## ✅ SOLUTION (2026-05-24) — runtime g_slots snapshot/restore
+
+**Where the unlock state actually lives (corrects every earlier model in this doc):**
+The campaign progress (per-level complete/unlock + scores) is the **active player's slot-0 block at
+`g_slots + 2480 .. + 2624`** (g_slots = `0x828EB348`). Diff-proven: winning Stan's House changes ~a
+dozen int fields there — notably a **"levels reached" gate byte at `g_slots+2520`** (1 = Stan's only,
+3 = Elementary unlocked). The block is **all small ints/flags, NO pointers** (the `0x1e 0x32 0x32`
+score thresholds at +2488 match disk `63E83FFF`). The level-select **rebuilds its level grid from
+this block** when the CAMPAIGN screen loads.
+- **NOT** `g_slots[+0..+20]` (a red herring — `g_slots[+2]` is some minor flag that does NOT drive
+  the display; setting it had no effect — verified).
+- **NOT** the settings cache `0x828E3A38` (that's the generic per-(user,setting) cache; the level-
+  select reads its `[+20]` pointer to the *per-boot heap* level array, which is itself built from the
+  g_slots block — so the heap array is downstream, g_slots is the source).
+
+**Why it was broken (root cause):** Two independent game-side faults:
+1. The guest **reads `63E83FFE` at boot** (`[PROF-RD] id=63E83FFE is_set=true` fires) but **never
+   deserializes it into the g_slots block** — so the in-memory campaign state stays default.
+2. The game **clobbers** the disk save to DEFAULT during nav/save (verified: after a win, `[PROF-WR]`
+   wrote `63E83FFE` with the level-complete flags back to 0). So even the disk is not a reliable
+   persistent source.
+The g_slots block is also **transient**: it only holds the won progress around a level win (the
+post-win "SCRAPBOOK UPDATED" screen); it reads 0 at the menu/level-select until the grid is built.
+
+**The fix (`third_party/rexglue-sdk/src/kernel/xam/xam_user.cpp` + `xam_input.cpp`, in
+`patches/rexglue-sdk-current-full.patch`):**
+- A **background thread** (started lazily from `XamInputGetState`) polls `g_slots+2520` every 20 ms;
+  when the gate **grows** (a win), it captures the 144-byte block `g_slots+2480..+2624` to a side
+  file `userdata/<title>/profile/User/gslots_campaign.bin`. The high-freq poll catches the transient
+  post-win window (the player normally lingers on the STAGE-COMPLETE/SCRAPBOOK screen for >1 s, so
+  20 ms is ample; the game's own profile-write is useless because it clobbers).
+- **Per frame** (`XamInputGetState` → `CampaignContinueRestore`), if the live gate is **lower** than
+  the saved snapshot (fresh boot / menu / default block), **copy the saved block back into g_slots**
+  — so the level-select grid is rebuilt with the saved unlocks. gate-gated ⇒ monotonic: in-session
+  wins (gate ≥ saved) are kept and grow the snapshot; never reduces progress.
+- **Format-agnostic** (raw bytes, no need to RE the serialize format) and self-bootstrapping. The
+  side file is the source of truth for the restore (replacing the game's clobbered disk save).
+
+**Verified by running (full version, `--license_mask=1`):**
+- Win Stan's House (CASUAL) → STAGE COMPLETE → restart → **Elementary School UNLOCKED** in the level
+  grid (`b6_levelselect2.png` with bootstrapped genuine win data; `b11_FINAL.png` with production
+  thread code). The background thread auto-creates the side file (`[CONT-FIX] saved … (gate=…)`).
+- **A/B control:** delete the side file, same build, disk still has progress → **Elementary LOCKED**
+  (`b7_levelselect2.png`) ⇒ the side-file restore is what unlocks it (the disk alone does not).
+
+**Live RE technique that cracked it (KB-worthy, promoted to general/):** ReadProcessMemory on the
+running recomp at host `0x100000000 + guest_addr` (guest space is mapped at host 4 GB) to dump/diff
+guest globals **without a rebuild** — a before/after diff across an in-session unlock pinpointed the
+exact bytes. Earlier static-analysis "final models" in this doc were repeatedly wrong; the live diff
+was decisive. (Tooling: `C:\Temp\rpm.ps1`.)
+
+---
+
+### (Superseded) original RE map below
 > **Status: POST-v1 BACKLOG** (maintainer scope decision 2026-05-24). v1 ships with save-to-disk +
 > in-session continue; cross-restart persistence is deferred. This doc is the resumable RE map for
-> when it's picked up.
+> when it's picked up. (Most conclusions below were CORRECTED by the live RE above — kept for history.)
 
 Resumable RE notes for the (post-v1) cross-restart continue gap. **Symptom:** the runtime saves+loads the
 profile correctly (verified: `[PROF-LOAD]`/`[PROF-RD]` fire at boot, `is_set=true`; a `SaveSetting`
