@@ -69,6 +69,21 @@ level-select reads). Likely `0x828E3A38` is a save-handle/staging table and the
 lis/addi, so not a recomp relocation bug.) Next: dump/inspect the `0x828E3A38` struct the load fills
 (`[slot+52]` from `sub_822A2150`) and find who, if anyone, copies it into g_slots.
 
+## Layer findings (2026-05-24, deeper trace)
+- **LOAD mgr `sub_8229C8D0` is GENERIC** — many callers (recomp.0/.2/.3, 9+ sites). It's a
+  "load setting blob into the `0x828E3A38` per-(user,setting) cache" helper, not campaign-specific.
+  So `0x828E3A38` is a generic settings cache; the campaign-specific "apply cache → g_slots" is
+  elsewhere (game logic).
+- **SAVE trigger = `sub_82150770`** (recomp.2:38219) → `sub_82296A38` (save mgr) → serializes
+  g_slots (`0x828EB348`). `sub_82150770` is in the **0x8215xxxx save subsystem** (cf. the dirty-flag
+  pump `sub_82151170` / unconditional `sub_8215E2E0` / handler `sub_8215D348` in [[55-save-system]]).
+  So the save just *persists* g_slots; it is NOT the reset.
+- ⇒ **The two targets for the fix:** (a) the **reset** that defaults g_slots on LOCAL-GAME/lobby
+  entry (game-specific, many layers up — likely near the session-enroll/lobby-init `sub_82297*`/
+  `sub_82298*` code; note the session-enroll fix routed the signed-in player through `loc_82298008`
+  — check it doesn't bypass a profile-apply), and (b) the **missing apply** that should copy the
+  loaded `0x828E3A38` cache into g_slots on CAMPAIGN entry. Both are guest-side.
+
 ## How to make progress (concrete)
 - **Instrument the save-slot global:** log reads/writes of `0x828E3A38` region (or the
   `sub_8229CA28` return) with the key, at boot vs at the level-select, to see if the same slot is
