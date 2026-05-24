@@ -85,3 +85,27 @@ correct** (same build booted earlier). Fastest restore is a **reboot** (reshuffl
 timing); the durable fix is in the SDK present path — make the **first-swap present complete and
 signal the guest GPU fence** (runtime fence write-back) so `sub_821BFF48` exits, and bound the
 guest fence-wait loop in `sub_821BFF48` (not `sub_821C6E58`) as a stop-gap.
+
+## Update 2 — more causes ruled out; the host is healthy (so it is NOT a wedge)
+- **Divergence point (booting vs frozen log):** in a log that booted, immediately after
+  `SetInterruptCallback(821C7170,…)` the **guest main thread continues into the per-frame loop**
+  (the flush `sub_82151170` runs, then input polling). In the frozen runs the guest **stalls right
+  there** — in the post-init GPU-fence wait, before the per-frame loop (so `XamInputGetState` is
+  never reached). The fence advances via the just-registered GPU interrupt; it isn't advancing.
+- **Additional causes ruled out this round:** GPU is healthy (`nvidia-smi`: RTX 3060, **11.5 GB
+  free**, 11% util, no leaked contexts); **GPU/TDR reset** (`Ctrl+Win+Shift+B`) — no change;
+  **system load** (overall CPU **2%**, idle); **remote-display/no-vblank** — the `DXGIUITickThread`
+  is **idle in a condition_variable** (`AreDXGIUITicksWaitable`=false), *not* stuck in
+  `WaitForVBlank`, so the present isn't waiting on vblank ticks (`AreUITicksNeededFromUIThread`
+  false → `WaitForUITickFromUIThread` returns immediately). The CP lambda
+  (command_processor.cpp:2014) is linear command-building, not an obvious infinite loop.
+- **Key refinement:** the Windows desktop **composits fine** throughout (DWM works, windows render,
+  screenshots succeed) → the host GPU/present pipeline is **not** wedged. Therefore this is **not a
+  host-GPU-wedge a reboot "clears"** — it is a **deterministic GPU-interrupt/fence-delivery race in
+  the rexglue-sdk runtime** that the *same build* won earlier the same session and now loses 100%.
+  A reboot can only help by **reshuffling thread scheduling/timing** (re-winning the race), so it
+  *may or may not* fix it. The durable fix is in the SDK: ensure the **guest GPU interrupt fires /
+  the EOP fence the guest polls (`sub_821BFF48`→`sub_821C6E58`, `[obj+10896]`) is written back**
+  after the first frame's GPU work, so the guest's post-init fence wait completes. Bounding the
+  guest wait is risky (the loop level is ambiguous across `sub_82150970`/`sub_82249xxx`, and
+  proceeding before the GPU is done corrupts state).
