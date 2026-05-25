@@ -1,14 +1,72 @@
 # Rendering defect — some font glyphs render as striped/garbled boxes (2026-05-24)
 
-**Status: ✅✅ REALLY SOLVED 2026-05-25 — `force_upload` on texture reload (verified by running).** The
-2026-05-24 "FULL RESOLUTION" below (#341 full-snapshot + fast-path read lock + default
-`clear_memory_page_state=false`) was **STILL insufficient**: striping RETURNED on the in-match
-"HIT ENEMIES…" tutorial banner under match load (maintainer re-reported via `/remote-control`). It was
-NOT a tile-mode/pitch/format/decode bug — it is a **stale page-valid state in the GPU shared-memory
-upload-skip optimization**, and ultimately that optimization is **unsafe for per-frame CPU-rasterized
-glyph textures**. Read the 2026-05-25 section first; the 2026-05-24 attempts follow as history.
+**Status: ✅✅✅ ACTUALLY SOLVED 2026-05-25 (late) — texture-cache "settle-recheck" of CPU-rasterized
+textures (verified by running, banner caught clean).** Every page-validity fix below — #341 full-
+snapshot, the fast-path read lock, `clear_memory_page_state=false`, the `force_upload` texture-reload
+flag, AND the sticky `system_page_flags_dynamic_` bit — failed to fix the specific reported element, the
+in-match green **"HIT ENEMIES WITH SNOWBALLS…"** banner. Instrumentation proved why: that banner's
+glyph textures are **`gpu_written=0`** (pure CPU), so the `force_upload` path already re-uploads them in
+full — the page-skip was never the cause for *this* element. The real cause is a **texture-load-vs-CPU-
+rasterization race** at a different layer (the texture cache). The page-validity fixes are still correct
+and kept (they fix the menu/HUD/results text, which DO ride the skip path); the new recheck is what fixes
+the banner. Read the "ACTUAL ROOT CAUSE & FIX" section next; everything after it is superseded history.
 
-## ✅✅ REAL RESOLUTION (2026-05-25, supersedes the 2026-05-24 "FULL RESOLUTION" below)
+## ✅✅✅ ACTUAL ROOT CAUSE & FIX (2026-05-25, late) — texture loaded mid-CPU-memcpy
+
+**Diagnosis by instrumentation** (temporary `SharedMemory::DebugCountPageFlags` + a per-load WARN in
+`TextureCache::PrepareTextureLoad`, and a WARN in the recheck path; all removed before commit). During a
+Stan's House match the only `gpu_written>0` textures are the two 1280×720 double-buffered scene buffers
+(`0x1D560000`/`0x1D8F8000`, correctly protected). The hint banner is a small **CPU-rasterized text strip**
+(`0x1D103000`, 583×27, k_8_8_8_8, **`gpu_written=0`, all pages `dynamic`**) that loads **exactly once**
+(`loads=1`) and is **never reloaded** — yet renders striped, and *which* tail is striped varies per run
+(non-deterministic).
+
+**Mechanism (the race):** the host write-watch is **one-shot** — `Texture::WatchCallback` fires on the
+**first** guest write to the watched range and the watch is then cancelled; `MemoryInvalidationCallback`
+also widens the invalidation and **drops page protection** for the range so the CPU can finish writing
+without faulting on every page. So when the guest does a multi-page glyph `memcpy`:
+1. first page write → fault → texture marked outdated, watch cancelled, protection dropped for the range;
+2. the texture cache (GPU thread) loads the texture, uploading the range **while the guest memcpy is
+   still in flight** → the upload reads stale bytes for the not-yet-written tail pages;
+3. the rest of the memcpy writes those pages **without faulting** (protection was dropped) →
+   no further invalidation → the texture is **never reloaded** (`loads=1`) → permanent striped tail.
+This bites the very **first/creation** load of a freshly-shown banner, which is exactly why the prior
+write-triggered-only recheck and the `dynamic`-bit (both keyed on a write event/flag) missed it.
+
+**The fix — settle-recheck in the texture cache** (`pipeline/texture/cache.{cpp,h}`): after a base load
+that was triggered by a **real reason (texture creation OR a guest write)** — not by a forced recheck —
+arm `base_recheck_frames_ = 3`. `TextureCache::RequestTextures` calls `Texture::ConsumeBaseRecheckFrame`
+for every bound texture and, while frames remain, re-marks the base outdated so it reloads. Consumption
+is **gated to one per GPU submission** (`current_submission_index_`), so the extra reloads are spread
+across **real frames**, by which point the CPU memcpy has settled → the reload captures complete bytes →
+no stale tail. `base_arm_recheck_on_load_` is set **only** by creation and the write callback (never by
+the forced rechecks), so it is **loop-free and bounded** (≤3 extra reloads per real change; static
+textures, written once, settle and stop). Cost is negligible (a few small CPU textures re-uploaded for a
+couple frames after they change).
+
+**Verified by running (2026-05-25 late, d3d12, RTX 3060; focus-free `live_input.txt`; fast 110 ms
+window-capture to beat the sub-second banner):** the banner was caught clean on first-entry — full text
+readable end-to-end ("…THEN PRESS Ⓨ TO USE THE ABILITY") where striped builds showed unreadable mush;
+green-on-green stripe metric **79.9 → 43.7–49.1 transitions/row** (settled frames); instrumentation
+confirmed the recheck fires for the exact banner texture `0x1D103000` (`remaining=1` then `0` on
+successive submissions); the clean (instrumentation-removed) build boots to menu. Boot survives (the
+intro's `gpu_written` pages are untouched by this change).
+
+**Debugging lesson:** when "fixing" an intermittent corruption repeatedly fails on one element while
+others go clean, **stop reasoning and instrument** — measure the actual per-page flags / load counts of
+the *specific* failing texture. Here it revealed the failing element was `gpu_written=0` (so the whole
+page-skip theory never applied to it) and `loads=1` (so the bug was a *missing reload*, not a *stale
+skip*) — a different layer entirely. Also: the once-per-session, sub-second banner needs a fast in-process
+rapid-fire capture to catch; a 0.5 s screenshot cadence lands in the gaps every time.
+
+## ⚠️ SUPERSEDED (2026-05-25 earlier) — `force_upload` on texture reload (fixes skip-path text, NOT the banner)
+
+This fix is **kept** (it correctly fixes menu/HUD/results text, which ride the page-skip path) but it does
+**not** fix the green banner (whose textures are `gpu_written=0` → already fully re-uploaded here). The
+"124 → 43 transitions/row" figure below was measured with a **white**-transition metric that is blind to
+the banner's **green-on-green** stripes, so it did not actually capture this element; treat it as evidence
+for the skip-path text only. The `system_page_flags_dynamic_` sticky bit is likewise kept but was
+insufficient for the banner. See the ACTUAL FIX above.
 
 **The 2026-05-24 fix was *still* insufficient.** With #341's full-snapshot rebuild + the fast-path read
 lock + default `clear_memory_page_state=false`, menus/results render clean — but the **in-match top
