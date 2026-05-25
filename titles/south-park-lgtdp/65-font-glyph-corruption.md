@@ -1,12 +1,64 @@
 # Rendering defect — some font glyphs render as striped/garbled boxes (2026-05-24)
 
-**Status: ✅ FULLY SOLVED 2026-05-24 (after a wrong first cut) — verified by running on real
-hardware.** It was NOT a tile-mode/pitch/format/decode bug — it is a **stale page-valid state in the
-GPU shared-memory upload-skip optimization**. The FIRST fix (lock the valid-flag swap, below) was
-**insufficient** — corruption kept recurring intermittently. The complete resolution is in the
-"FULL RESOLUTION" section immediately below; the original (partial) SOLUTION + symptom notes follow.
+**Status: ✅✅ REALLY SOLVED 2026-05-25 — `force_upload` on texture reload (verified by running).** The
+2026-05-24 "FULL RESOLUTION" below (#341 full-snapshot + fast-path read lock + default
+`clear_memory_page_state=false`) was **STILL insufficient**: striping RETURNED on the in-match
+"HIT ENEMIES…" tutorial banner under match load (maintainer re-reported via `/remote-control`). It was
+NOT a tile-mode/pitch/format/decode bug — it is a **stale page-valid state in the GPU shared-memory
+upload-skip optimization**, and ultimately that optimization is **unsafe for per-frame CPU-rasterized
+glyph textures**. Read the 2026-05-25 section first; the 2026-05-24 attempts follow as history.
 
-## ✅ FULL RESOLUTION (2026-05-24, supersedes the first SOLUTION below)
+## ✅✅ REAL RESOLUTION (2026-05-25, supersedes the 2026-05-24 "FULL RESOLUTION" below)
+
+**The 2026-05-24 fix was *still* insufficient.** With #341's full-snapshot rebuild + the fast-path read
+lock + default `clear_memory_page_state=false`, menus/results render clean — but the **in-match top
+tutorial banner ("HIT ENEMIES WITH SNOWBALLS…")** still striped under match load (maintainer
+re-reported via `/remote-control`, with a screenshot). A sticky-`dynamic`-bit experiment (mark a page
+CPU-dynamic on its first invalidation, then never skip its upload) only **partially** helped — "HIT
+ENEMIES" rendered clean but the rest stayed mush — because it inherits the same unreliable signal: a
+page is only protected after the host **write-watch trips for it at least once**, and under match load
+the watch misses many of the glyph texture's pages every frame.
+
+**Deeper root cause:** `SharedMemory::RequestRanges`' per-page *"already-valid → skip upload"*
+optimization is **fundamentally unsafe for a texture the CPU re-rasterizes to the same address every
+frame**. Correctness there depends on the write-watch invalidating **every** changed page **every**
+frame; that is a race and it loses pages intermittently → wrongly-valid pages → skipped re-upload → the
+GPU samples stale bytes → striped glyphs. `clear_memory_page_state=false` only removes one *source* of
+false-valid (the frame-end GPU-written propagation); it does not make the per-page skip reliable.
+
+**The fix — force a full re-upload at the texture-reload boundary** (`shared_memory.{cpp,h}` +
+`pipeline/texture/cache.cpp`): the texture cache calls `RequestRanges` **only** when a texture is
+already known outdated (`base_outdated` — its own watch fired), i.e. its bytes *must* be refetched. So
+add a `force_upload` parameter to `RequestRanges` and pass it **true** from the two texture-cache reload
+sites (`LoadTextureData` and the batched `RequestTextures`). With `force_upload`, `RequestRanges` skips
+the "all-valid" fast-path and treats every in-range page as needing upload — **except** pages the GPU
+itself wrote. Vertex/index and other GPU reads keep `force_upload=false` (the skip is safe and wanted
+there; this also keeps boot-time upload volume unchanged).
+
+**⚠️ KEY LESSON — the valid-flag skip also *protects GPU-written data*, not just perf.** The first cut
+of the force path used a blunt `block_valid = 0` (re-upload *everything* in range). That re-uploaded
+**GPU-written pages** (resolved render targets, memexport output) from stale guest CPU memory →
+clobbered the GPU's own data → the boot intro rendered **black, 6 launches in a row**. The correct force
+keeps GPU-written pages valid: `block_valid = system_page_flags_valid_and_gpu_written_[i]`. CPU-
+rasterized glyph pages are *not* GPU-written, so they all re-upload (fixes striping) while render
+targets stay protected (fixes boot). A smaller `system_page_flags_dynamic_` sticky-bit safety net is
+also kept (boot-safe; covers any CPU-dynamic page reached outside the texture-cache force path).
+
+**Verified by running (2026-05-25, d3d12, RTX 3060; focus-free `live_input.txt`, window-capture +
+zoom):** boot OK; the reported banner went **124 → 43 white/non-white transitions per row** at the same
+region (dense vertical-bar striping → crisp letters); in-match HUD "GINGER KIDS" / WAVE / counters
+clean; results SCORE / COIN BONUS / TOTAL clean; menus and loading hints clean. (Boot still hits the
+pre-existing non-deterministic GPU-fence black-stall on *some* launches — unrelated; retry past it. The
+force path is boot-safe — booted on attempt 1 once corrected.) Patch regenerated
+(`patches/rexglue-sdk-current-full.patch`).
+
+**Debugging notes:** (1) an intermittent corruption that a sticky per-page protection only *partially*
+fixes is a strong tell that the protection's *trigger* (here the write-watch) is itself unreliable —
+force the work unconditionally at a boundary where you *know* the data is stale (here: texture reload).
+(2) Capturing a D3D window via `CopyFromScreen` requires the window foregrounded *and* content rendered;
+a too-early "bright" frame is the desktop, not the game, and will de-sync scripted input.
+
+## ✅ FULL RESOLUTION (2026-05-24, supersedes the first SOLUTION below) — INSUFFICIENT, see 2026-05-25 above
 
 **The first fix was incomplete.** Locking the buffer swap (and later the fast-path read) reduced but
 did **not** eliminate the corruption. A maintainer with the build on two PCs showed it was
