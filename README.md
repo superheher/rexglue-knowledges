@@ -45,6 +45,7 @@ Legend: ✅ written · ✍️ skeleton (expand on contact) · ⏳ filled during 
 | `25-containers-and-extraction.md` | ✅ | STFS (CON/LIVE/PIRS), GOD, ISO/GDFX; how to get `default.xex` + assets |
 | `30-toolchains.md` | ✅ | XenonRecomp vs XenosRecomp vs rexglue-sdk vs rexdex; how to choose |
 | `40-recompilation-pipeline.md` | ✅ | The end-to-end pipeline and where each tool fits |
+| `45-static-binary-analysis.md` | ✅ | Static analysis of a decrypted title: `0x01F2` PPC-BE PE disassembly (capstone), `.pdata` as the function-boundary source, big-endian guest content |
 | `50-cpu-recompilation.md` | ✅ | Jump tables, function boundaries, register save/restore, longjmp/setjmp, exceptions, endianness, FP/denormals, optimizations |
 | `55-performance-and-pacing.md` | ✅ | Per-frame serial chain (latency-bound); vsync time-dilation; host EPP/governor throttling; levers that *don't* move a latency floor + the two that do |
 | `60-gpu-shader-translation.md` | ✅ | Xenos microcode → HLSL/SPIR-V, vertex fetch & formats, samplers, specialization, control flow |
