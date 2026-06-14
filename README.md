@@ -60,11 +60,23 @@ Legend: ✅ written · ✍️ skeleton (expand on contact) · ⏳ filled during 
 | Doc | Status | Topic |
 |-----|:--:|-------|
 | `00-feasibility.md` | ✅ | Graded feasibility verdict + risk register for this title |
-| `10-dump-analysis.md` | ✅ | Container layout, XEX/import findings, extraction plan |
+| `10-dump-analysis.md` | ✅ | Container/STFS layout, XEX & import recon, extraction plan |
 | `15-environment.md` | ✅ | Host toolchain: what's installed and how (Phase 0 record) |
-| `20-imports-backlog.md` | ⏳ | Concrete kernel/XAM imports used: done/todo |
-| `30-boot-log.md` | ⏳ | Boot bring-up journal (crash → cause → fix) |
-| `40-render-notes.md` | ⏳ | Shader/render correctness findings |
+| `20-codegen.md` | ✅ | Codegen & first build (Phase 2): function table, unresolved-call config, fixups |
+| `30-boot-log.md` | ✅ | Boot bring-up journal (crash → cause → fix) |
+| `35-entry-forensics.md` | ✅ | Why a cold call to the XEX entry stalls (mid-function entry, no prologue) |
+| `40-seh-implementation-plan.md` | ✅ | The boot's last blocker: custom setjmp/longjmp vs table SEH; resume-after-exception |
+| `50-menu-input-and-lobby.md` | ✅ | Reaching an interactive game: menu, input plumbing, lobby/session enroll |
+| `55-save-system.md` | ✅ | Save-system architecture + why a blind run never triggers it (trial mode, async queue) |
+| `56-continue-re-map.md` | ✅ | Cross-restart "continue": locating + snapshot/restoring the in-memory progress state |
+| `60-boot-present-deadlock.md` | ✅ | First-XE_SWAP present/vsync deadlock → CP `WAIT_REG_MEM` spin-yield fix |
+| `65-font-glyph-corruption.md` | ✅ | In-match glyph striping = texture page-validity race (rexglue #341); full-snapshot + forced-upload fix |
+| `66-always-win-invincibility.md` | ✅ | `--always_win` cheat; engine (not Lua) owns win/lose — verify with the real trigger |
+| `67-polish-backlog.md` | ✅ | Post-v1 polish: locale-subdir asset fallback, boot profiling, audio clips, intro WMV |
+| `68-autonomous-boot-to-gameplay.md` | ✅ | Autonomous boot → live gameplay in one command (recipe + gotchas) |
+| `70-video-playback.md` | ✅ | Intro/cutscene `.wmv` already play — the guest links its own WMV3/WMA2 decoder |
+| `75-in-match-lag-and-perf.md` | ✅ | In-match lag root-cause (CPU-freq trap + translate capacity), the v1.0 line, v2 levers |
+| `90-progress-report.md` | ✅ | Bring-up progress report / per-subsystem capstone (historical record) |
 
 ### `templates/`
 | Doc | Status | Topic |
