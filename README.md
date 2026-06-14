@@ -46,6 +46,7 @@ Legend: ✅ written · ✍️ skeleton (expand on contact) · ⏳ filled during 
 | `30-toolchains.md` | ✅ | XenonRecomp vs XenosRecomp vs rexglue-sdk vs rexdex; how to choose |
 | `40-recompilation-pipeline.md` | ✅ | The end-to-end pipeline and where each tool fits |
 | `50-cpu-recompilation.md` | ✅ | Jump tables, function boundaries, register save/restore, longjmp/setjmp, exceptions, endianness, FP/denormals, optimizations |
+| `55-performance-and-pacing.md` | ✅ | Per-frame serial chain (latency-bound); vsync time-dilation; host EPP/governor throttling; levers that *don't* move a latency floor + the two that do |
 | `60-gpu-shader-translation.md` | ✅ | Xenos microcode → HLSL/SPIR-V, vertex fetch & formats, samplers, specialization, control flow |
 | `70-runtime-kernel-and-xam.md` | ✅ | Implementing `xboxkrnl`/`xam`: memory, threads, TLS, sync, time, the import-shim methodology |
 | `75-runtime-graphics-audio-input-io.md` | ✅ | Command processor, audio (XMA), input (XInput), filesystem/VFS, saves |

@@ -460,6 +460,27 @@ Format: **Symptom → Cause → Fix** (with the deep-dive doc in parentheses).
   splash/intro animation** (user-skippable), which the runtime can't speed up. Don't "optimize"
   a fence loop that isn't the bottleneck. (`60`, `75`)
 
+## Performance / pacing
+- **Game runs in slow-motion (everything ~half speed); audio & input stay normal; no tearing.**
+  → A vsync-paced title that ticks its sim **once per rendered frame** overran the per-frame
+  budget, so swaps snap to an **exact divisor** of refresh (60→30.0) and sim time dilates in
+  proportion — **time-dilation, not "low fps"**. → Make a frame fit (cut **per-draw** translate
+  cost via texture-array/bindless batching) or pipeline guest↔CP + advance the swap fence at
+  ring-arrival; `vsync=false` only converts it to **fast-forward** (not a fix). (`55`, south-park-lgtdp `75`)
+- **The game throttles in the FIRST SECONDS of action, then steadies; measured CPU% is low.**
+  → The per-frame chain is **latency-bound** (cores idle between fence waits), so the host governor
+  **down-clocks** it. Linux `intel_pstate` EPP=`balance`/schedutil; elsewhere the power plan. →
+  Pin **EPP=`performance`** persistently (+ optional in-process freq-keeper). It is **not** a code
+  regression. (`55`)
+- **A huge recompiled `.so`/DLL is slow; the profile shows an indirect-call storm.** → Built with
+  **`-mcmodel=large`**, which routes nearly every call through a GOT/indirect thunk. → Use
+  **`-mcmodel=medium`** (Linux GCC/Clang; guard `if(NOT WIN32)` — MSVC never had this). (`50`, `55`)
+- **PGO/BOLT/LTO/inlining/spin-removal don't move the perf floor.** → The floor is
+  **latency-bound** (a serial guest→translate→present chain where the guest waits its own fence),
+  not throughput-bound, so throughput levers can't help. → Measure the **regime** first; pursue
+  **latency** levers (per-draw cost, guest↔CP pipelining) and don't re-spend weeks on the closed
+  codegen levers (catalog in `55`). (`55`)
+
 ## Process / hygiene
 - **A re-codegen wiped your edits.** → You hand-edited **generated** files. → Move
   changes into **config + `src/`** (hooks/overrides); never edit generated code.

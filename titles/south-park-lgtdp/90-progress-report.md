@@ -1,5 +1,10 @@
 # Progress report — South Park: Let's Go Tower Defense Play! recomp
 
+> **↑ PERF ERA + TRUE v1.0 (2026-06-10):** this report is the *bring-up* record and
+> **predates the performance campaign** — its "v1 COMPLETE" is "playable to a win", not the
+> shipped v1.0. For the in-match lag root-cause, the 2× slow-mo residual, and the v1.0 line,
+> see **`75-in-match-lag-and-perf.md`** (mechanism: `general/55`).
+
 > **CURRENT STATUS (updated 2026-05-24, authoritative) — v1 COMPLETE + polish backlog worked.**
 > Single-player is **playable end-to-end and saves**: boot → menu → LOCAL GAME → CAMPAIGN →
 > CASUAL → match → **WIN**, with rendering, gamepad, audio thread, **save-to-disk**, **cross-restart
